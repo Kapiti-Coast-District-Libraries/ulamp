@@ -17,12 +17,22 @@ import {
 } from "./db.js";
 
 const app = express();
-app.use(cors());
+
+// Resolve front end origin once (supports CLIENT_URL or CLIENT_ORIGIN)
+const CLIENT_URL = process.env.CLIENT_URL || process.env.CLIENT_ORIGIN || "";
+
+// CORS, allow your front end only (set CLIENT_URL or CLIENT_ORIGIN in Render)
+app.use(
+  cors({
+    origin: CLIENT_URL ? [CLIENT_URL] : true,
+    credentials: true
+  })
+);
 
 // Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", { apiVersion: "2024-06-20" });
 
-// webhook first, raw body for signature verification
+// Webhook first (raw body for signature verification)
 const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
 app.post("/api/stripe-webhook", express.raw({ type: "application/json" }), (req, res) => {
   try {
@@ -36,7 +46,11 @@ app.post("/api/stripe-webhook", express.raw({ type: "application/json" }), (req,
 
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
-      try { upsertOrderFromSession(session); } catch (e) { console.error("order upsert failed", e); }
+      try {
+        upsertOrderFromSession(session);
+      } catch (e) {
+        console.error("order upsert failed", e);
+      }
     }
 
     return res.json({ received: true });
@@ -46,26 +60,28 @@ app.post("/api/stripe-webhook", express.raw({ type: "application/json" }), (req,
   }
 });
 
-// JSON parser for the rest
+// Now JSON parser for the rest
 app.use(express.json({ limit: "2mb" }));
 
-// Google Drive service account, optional
-const hasSaKey =
-  !!process.env.GOOGLE_APPLICATION_CREDENTIALS &&
-  fs.existsSync(process.env.GOOGLE_APPLICATION_CREDENTIALS);
+// Google Drive service account (uses GOOGLE_APPLICATION_CREDENTIALS path)
+const saPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+const hasSaKey = !!saPath && fs.existsSync(saPath);
 
 let drive = null;
 if (hasSaKey) {
-  const auth = new google.auth.GoogleAuth({ scopes: ["https://www.googleapis.com/auth/drive.file"] });
+  const auth = new google.auth.GoogleAuth({
+    scopes: ["https://www.googleapis.com/auth/drive.file"]
+  });
   drive = google.drive({ version: "v3", auth });
 }
 
-// debug helpers
+// Friendly root route and debug
+app.get("/", (_, res) => res.json({ ok: true, service: "api", time: new Date().toISOString() }));
 app.get("/api/health", (_, res) => res.json({ ok: true }));
 app.get("/api/debug", (_, res) =>
   res.json({
     webhookHasSecret: !!process.env.STRIPE_WEBHOOK_SECRET,
-    clientUrl: process.env.CLIENT_URL || null,
+    clientUrl: CLIENT_URL || null,
     priceCents: process.env.PRICE_CENTS ? Number(process.env.PRICE_CENTS) : null,
     currency: process.env.CURRENCY || null,
     driveFolderIdPresent: !!process.env.DRIVE_FOLDER_ID,
@@ -73,11 +89,11 @@ app.get("/api/debug", (_, res) =>
   })
 );
 
-// quick Apps Script test
+// Quick Apps Script test
 app.get("/api/gas-test", async (_, res) => {
   try {
     if (!process.env.GAS_WEBAPP_URL) {
-      return res.status(500).json({ error: "no_gas_webapp", hint: "Set GAS_WEBAPP_URL in .env" });
+      return res.status(500).json({ error: "no_gas_webapp", hint: "Set GAS_WEBAPP_URL in env" });
     }
     const payload = {
       secret: process.env.GAS_SHARED_SECRET || "",
@@ -93,19 +109,23 @@ app.get("/api/gas-test", async (_, res) => {
     });
     const text = await r.text();
     let body;
-    try { body = JSON.parse(text); } catch { body = { raw: text }; }
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = { raw: text };
+    }
     return res.status(r.status).json({ status: r.status, body });
   } catch (e) {
     return res.status(500).json({ error: "gas_test_failed", message: e?.message });
   }
 });
 
-// checkout, store design draft in DB, keep Stripe metadata tiny
+// Checkout, store design draft in DB, keep Stripe metadata tiny
 app.post("/api/checkout", async (req, res) => {
   try {
     const { packKey, modelKey, params, filename } = req.body || {};
     if (!packKey || !modelKey || !params) return res.status(400).json({ error: "missing_input" });
-    if (!process.env.CLIENT_URL) return res.status(500).json({ error: "client_url_missing" });
+    if (!CLIENT_URL) return res.status(500).json({ error: "client_url_missing" });
 
     let line_items;
     if (process.env.STRIPE_PRICE_ID) {
@@ -114,10 +134,16 @@ app.post("/api/checkout", async (req, res) => {
       const unit = parseInt(process.env.PRICE_CENTS || "0", 10);
       const currency = (process.env.CURRENCY || "usd").toLowerCase();
       if (!unit || unit < 50) return res.status(500).json({ error: "price_not_configured" });
-      line_items = [{
-        quantity: 1,
-        price_data: { currency, unit_amount: unit, product_data: { name: "Custom lampshade STL" } }
-      }];
+      line_items = [
+        {
+          quantity: 1,
+          price_data: {
+            currency,
+            unit_amount: unit,
+            product_data: { name: "Custom lampshade STL" }
+          }
+        }
+      ];
     }
 
     const session = await stripe.checkout.sessions.create({
@@ -126,10 +152,26 @@ app.post("/api/checkout", async (req, res) => {
       customer_creation: "always",
       phone_number_collection: { enabled: true },
       shipping_address_collection: {
-        allowed_countries: ["NZ","AU","US","CA","GB","IE","DE","FR","NL","BE","SE","NO","DK","ES","IT"]
+        allowed_countries: [
+          "NZ",
+          "AU",
+          "US",
+          "CA",
+          "GB",
+          "IE",
+          "DE",
+          "FR",
+          "NL",
+          "BE",
+          "SE",
+          "NO",
+          "DK",
+          "ES",
+          "IT"
+        ]
       },
-      success_url: `${process.env.CLIENT_URL}/?success=1&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.CLIENT_URL}/?canceled=1`,
+      success_url: `${CLIENT_URL}/?success=1&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${CLIENT_URL}/?canceled=1`,
       metadata: {
         packKey,
         modelKey,
@@ -137,7 +179,7 @@ app.post("/api/checkout", async (req, res) => {
       }
     });
 
-    // persist the full design locally keyed by session id
+    // Persist the full design locally keyed by session id
     saveDraftOrder(session.id, {
       packKey,
       modelKey,
@@ -152,7 +194,7 @@ app.post("/api/checkout", async (req, res) => {
   }
 });
 
-// verify a session
+// Verify a session
 app.get("/api/session/:id", async (req, res) => {
   try {
     const s = await stripe.checkout.sessions.retrieve(req.params.id);
@@ -166,19 +208,13 @@ app.get("/api/session/:id", async (req, res) => {
   }
 });
 
-// helpers for address and color
+// Helpers
 function makeAddressSimple(ship) {
   if (!ship || !ship.address) return "";
   const a = ship.address;
-  // Only human friendly parts, single line
-  return [
-    a.line1 || "",
-    a.line2 || "",
-    a.city || "",
-    a.state || a.region || "",
-    a.postal_code || "",
-    a.country || ""
-  ].filter(Boolean).join(", ");
+  return [a.line1 || "", a.line2 || "", a.city || "", a.state || a.region || "", a.postal_code || "", a.country || ""]
+    .filter(Boolean)
+    .join(", ");
 }
 function extractColorNameFromParams(paramsJson) {
   try {
@@ -189,8 +225,14 @@ function extractColorNameFromParams(paramsJson) {
   }
 }
 
-// upload STL to Drive, idempotent per session, names file with order id
-const upload = multer({ dest: "uploads/" });
+// Ensure uploads folder exists for multer
+const uploadDir = "uploads";
+try {
+  fs.mkdirSync(uploadDir, { recursive: true });
+} catch { /* ignore */ }
+
+// Upload STL to Drive, idempotent per session, names file with order id
+const upload = multer({ dest: uploadDir + "/" });
 const inFlightUploads = new Set();
 
 function pad6(n) {
@@ -210,7 +252,7 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
   }
 
   try {
-    // already uploaded
+    // Already uploaded
     const existing = getOrderBySession(session_id);
     if (existing && existing.uploaded === 1 && existing.drive_file_id) {
       if (req.file?.path) fs.unlinkSync(req.file.path);
@@ -231,7 +273,7 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
     }
     inFlightUploads.add(session_id);
 
-    // verify session and upsert order basics
+    // Verify session and upsert order basics
     const s = await stripe.checkout.sessions.retrieve(session_id);
     const paid = s?.payment_status === "paid" && s?.status === "complete";
     if (!paid) {
@@ -239,9 +281,13 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
       inFlightUploads.delete(session_id);
       return res.status(402).json({ error: "payment_not_completed" });
     }
-    try { upsertOrderFromSession(s); } catch (e) { console.error("upsertOrderFromSession failed:", e); }
+    try {
+      upsertOrderFromSession(s);
+    } catch (e) {
+      console.error("upsertOrderFromSession failed:", e);
+    }
 
-    // lookup order row, get id and params for color and address
+    // Lookup order row, get id and params for color and address
     const orderRow = getOrderBySession(session_id);
     const orderId = orderRow?.id;
     const colorName = extractColorNameFromParams(orderRow?.params_json || "");
@@ -251,11 +297,11 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
     const phone = s?.customer_details?.phone || "";
     const amount = s?.amount_total ?? "";
 
-    // name file with order number
+    // Name file with order number
     const baseExt = incomingName.toLowerCase().endsWith(".stl") ? ".stl" : ".stl";
     const finalName = `ORDER_${pad6(orderId)}_lampshade${baseExt}`;
 
-    // upload to Drive either via SA or GAS
+    // Upload to Drive, either via SA or GAS
     const folderId = process.env.DRIVE_FOLDER_ID;
     let fileData = null;
 
@@ -269,7 +315,6 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
       });
       fileData = data;
     } else if (process.env.GAS_WEBAPP_URL) {
-      // read file and send to GAS with color and simple address
       const buf = fs.readFileSync(req.file.path);
       const payload = {
         secret: process.env.GAS_SHARED_SECRET || "",
@@ -285,12 +330,12 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
         name,
         phone,
         addressSimple: simpleAddress,
-        colorName,       // replace currency with color on the sheet
-        amount,          // keep amount if you want, can remove if not needed
+        colorName,
+        amount,
 
         // optional references
         packKey: s?.metadata?.packKey || "",
-        modelKey: s?.metadata?.modelKey || "",
+        modelKey: s?.metadata?.modelKey || ""
       };
 
       const r = await fetch(process.env.GAS_WEBAPP_URL, {
@@ -299,17 +344,31 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
         body: JSON.stringify(payload)
       });
       const text = await r.text();
-      let js; try { js = JSON.parse(text); } catch { js = null; }
+      let js;
+      try {
+        js = JSON.parse(text);
+      } catch {
+        js = null;
+      }
       if (!js || !js.ok) {
         throw new Error(`Apps Script upload failed, status ${r.status}, ${js?.error || text}`);
       }
-      fileData = { id: js.id, name: js.name, webViewLink: js.webViewLink, webContentLink: js.webContentLink };
+      fileData = {
+        id: js.id,
+        name: js.name,
+        webViewLink: js.webViewLink,
+        webContentLink: js.webContentLink
+      };
     } else {
       throw new Error("No Drive uploader configured, set GAS_WEBAPP_URL or add a service account key");
     }
 
     if (req.file?.path) fs.unlinkSync(req.file.path);
-    try { markUploaded(session_id, fileData, finalName); } catch (e) { console.error("markUploaded failed:", e); }
+    try {
+      markUploaded(session_id, fileData, finalName);
+    } catch (e) {
+      console.error("markUploaded failed:", e);
+    }
     inFlightUploads.delete(session_id);
 
     return res.json({ ok: true, file: { ...fileData, name: finalName } });
@@ -321,7 +380,7 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
   }
 });
 
-// admin endpoints
+// Admin endpoints
 app.get("/api/orders", (_, res) => res.json({ ok: true, orders: listOrders(200) }));
 app.get("/api/orders/:sessionId", (req, res) => {
   const row = getOrderBySession(req.params.sessionId);
