@@ -40,6 +40,68 @@ function Step({ label, active, done }) {
   );
 }
 
+/* NEW: Welcome modal shown on every load */
+function WelcomeModal({ open, onClose }) {
+  if (!open) return null;
+  return (
+    <div className="welcome-modal">
+      <div className="welcome-card">
+        <button className="modal-close" aria-label="Close" onClick={onClose}>×</button>
+        <h2 className="welcome-title">Welcome, design your one of a kind lamp</h2>
+
+        <div className="welcome-grid">
+          {/* Replace these with your own images */}
+          <figure className="welcome-figure">
+            <img
+              src="/images/example-1.jpg"
+              alt="Example lamp 1"
+              className="welcome-image"
+              loading="eager"
+            />
+            <figcaption>Example finish</figcaption>
+          </figure>
+          <figure className="welcome-figure">
+            <img
+              src="/images/example-2.jpg"
+              alt="Example lamp 2"
+              className="welcome-image"
+              loading="eager"
+            />
+            <figcaption>Pattern detail</figcaption>
+          </figure>
+        </div>
+
+        <ol className="welcome-steps">
+          <li>Design your lamp, all numbers are in millimeters, so pick the exact size you want</li>
+          <li>Click Checkout and we will prepare your file</li>
+          <li>Pay and wait a few seconds while your file is sent to us</li>
+          <li>We 3D print your one of a kind lamp and post it to you</li>
+        </ol>
+
+        <div className="welcome-actions">
+          <button onClick={onClose} className="primary">Start designing</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* NEW: Small preparing modal during checkout POST */
+function CheckoutPreparingModal({ open, message = "Preparing your file..." }) {
+  if (!open) return null;
+  return (
+    <div className="checkout-modal">
+      <div className="checkout-card">
+        <div className="spinner" aria-hidden="true" />
+        <div className="checkout-text">
+          <div className="checkout-title">We are preparing your file</div>
+          <div className="checkout-sub">{message}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Designer() {
   const packKeys = Object.keys(packs);
   const firstPack = packKeys[0] || "";
@@ -62,17 +124,27 @@ export default function Designer() {
   const [colorHex, setColorHex] = React.useState(palette[0]?.value || "#dddddd");
   const [colorName, setColorName] = React.useState(palette[0]?.name || "Color");
 
-  // modal
+  // existing modal
   const [modalOpen, setModalOpen] = React.useState(false);
   const [modalStage, setModalStage] = React.useState(0);
   const [modalPercent, setModalPercent] = React.useState(0);
   const [modalCanClose, setModalCanClose] = React.useState(false);
+
+  // NEW: welcome modal and preparing modal
+  const [welcomeOpen, setWelcomeOpen] = React.useState(true);
+  const [preparingOpen, setPreparingOpen] = React.useState(false);
+  const [preparingMsg, setPreparingMsg] = React.useState("Preparing your file...");
 
   // guard for success handler
   const ranSuccessRef = React.useRef(false);
 
   // prevent pack change effect from wiping randomized params once
   const skipNextDefaultsRef = React.useRef(false);
+
+  // NEW: always open welcome on load
+  React.useEffect(() => {
+    setWelcomeOpen(true);
+  }, []);
 
   React.useEffect(() => {
     if (skipNextDefaultsRef.current) {
@@ -215,6 +287,9 @@ export default function Designer() {
 
   const onCheckout = async () => {
     try {
+      setPreparingMsg("Preparing your file...");
+      setPreparingOpen(true);
+
       const designName = "lampshade.stl";
       const enriched = { ...params, colorHex, colorName };
       const r = await fetch("/api/checkout", {
@@ -229,14 +304,22 @@ export default function Designer() {
       });
       if (!r.ok) {
         const t = await r.text().catch(() => "");
+        setPreparingOpen(false);
         alert(`Checkout failed, status ${r.status}, ${t}`);
         return;
       }
       const js = await r.json();
-      if (js?.url) window.location.href = js.url;
-      else alert("Checkout failed, no URL returned");
+      if (js?.url) {
+        setPreparingMsg("Redirecting to checkout...");
+        // keep the modal visible until navigation starts
+        window.location.href = js.url;
+      } else {
+        setPreparingOpen(false);
+        alert("Checkout failed, no URL returned");
+      }
     } catch (e) {
       console.error(e);
+      setPreparingOpen(false);
       alert(`Checkout error, ${e?.message || e}`);
     }
   };
@@ -291,6 +374,7 @@ export default function Designer() {
 
       <footer className="footer">Built with React and Three.js</footer>
 
+      {/* Existing post payment modal */}
       <UploadModal
         open={modalOpen}
         stage={modalStage}
@@ -299,7 +383,10 @@ export default function Designer() {
         canCancel={modalCanClose}
         onCancel={() => setModalOpen(false)}
       />
+
+      {/* NEW modals */}
+      <WelcomeModal open={welcomeOpen} onClose={() => setWelcomeOpen(false)} />
+      <CheckoutPreparingModal open={preparingOpen} message={preparingMsg} />
     </div>
   );
 }
-
