@@ -48,6 +48,11 @@ export default defineConfig(({ mode }) => {
       sourcemap: true,
       target: "esnext",
       rollupOptions: {
+        // include admin.html in the build
+        input: {
+          main: path.resolve(__dirname, "index.html"),
+          admin: path.resolve(__dirname, "admin.html"),
+        },
         output: {
           manualChunks: {
             three: ["three", "three-stdlib"],
@@ -57,3 +62,4 @@ export default defineConfig(({ mode }) => {
     },
   };
 });
+
