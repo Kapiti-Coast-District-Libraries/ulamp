@@ -127,3 +127,133 @@ button:hover { background: #f3f3f7; }
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* Mobile layout improvement: move buttons between viewer and controls */
+@media (max-width: 768px) {
+  .layout {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    padding: 8px;
+  }
+
+  .viewport {
+    order: 1;
+    height: 60vh;
+    min-height: 300px;
+  }
+
+  /* Move the topbar buttons below the viewport */
+  .actions {
+    order: 2;
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin: 10px 0;
+  }
+
+  /* Hide brand name on mobile if needed */
+  .brand {
+    display: none;
+  }
+
+  /* Keep the control panel (sliders) last */
+  .panel {
+    order: 3;
+    margin-top: 8px;
+    height: auto;
+    max-height: 40vh;
+    overflow-y: auto;
+  }
+
+  .topbar {
+    flex-direction: column;
+    align-items: center;
+    border: none;
+    background: none;
+    padding: 0;
+  }
+
+  .footer {
+    position: static;
+  }
+}
+/* Full page intro, first visit only */
+.intro-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 12, 16, 0.72);
+  display: grid;
+  place-items: center;
+  z-index: 9998;
+  backdrop-filter: blur(2px);
+}
+
+.intro-card {
+  width: min(760px, 94vw);
+  background: #0f1116;
+  color: #f5f7fb;
+  border: 1px solid #2a2f3a;
+  border-radius: 16px;
+  padding: 22px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+}
+
+.intro-title {
+  font-size: 22px;
+  font-weight: 800;
+  margin: 2px 0 8px 0;
+}
+
+.intro-sub {
+  font-size: 14px;
+  color: #c6d0e0;
+  margin-bottom: 14px;
+}
+
+.intro-gallery {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+  margin: 10px 0 14px 0;
+}
+.intro-gallery img {
+  width: 100%;
+  height: 180px;
+  object-fit: cover;
+  border-radius: 12px;
+  border: 1px solid #2a2f3a;
+}
+
+.intro-steps {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 6px 0;
+}
+.intro-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.intro-step .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #89a7ff;
+  flex: 0 0 10px;
+}
+.intro-step .text {
+  font-size: 15px;
+}
+
+.intro-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.intro-actions .secondary {
+  background: transparent;
+  color: #c6d0e0;
+}
+
