@@ -16,12 +16,23 @@ import {
   saveDraftOrder
 } from "./db.js";
 
+// map GOOGLE_SERVICE_ACCOUNT_PATH to GOOGLE_APPLICATION_CREDENTIALS if provided
+if (process.env.GOOGLE_SERVICE_ACCOUNT_PATH && !process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  process.env.GOOGLE_APPLICATION_CREDENTIALS = process.env.GOOGLE_SERVICE_ACCOUNT_PATH;
+}
+
 const app = express();
 
-// Resolve front end origin once (supports CLIENT_URL or CLIENT_ORIGIN)
+// tiny request logger so you can see traffic in Render Runtime logs
+app.use((req, _res, next) => {
+  console.log(`[req] ${req.method} ${req.path}`);
+  next();
+});
+
+// Resolve front end origin once
 const CLIENT_URL = process.env.CLIENT_URL || process.env.CLIENT_ORIGIN || "";
 
-// CORS, allow your front end only (set CLIENT_URL or CLIENT_ORIGIN in Render)
+// CORS, allow your front end only
 app.use(
   cors({
     origin: CLIENT_URL ? [CLIENT_URL] : true,
@@ -32,38 +43,47 @@ app.use(
 // Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", { apiVersion: "2024-06-20" });
 
-// Webhook first (raw body for signature verification)
+// Make the webhook path explicit so it is easy to match in Stripe dashboard
+const WEBHOOK_PATH = "/api/stripe-webhook";
+
+// Webhook first, with raw body for signature verification
 const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || "";
-app.post("/api/stripe-webhook", express.raw({ type: "application/json" }), (req, res) => {
+app.post(WEBHOOK_PATH, express.raw({ type: "application/json" }), (req, res) => {
+  console.log("[webhook] hit");
   try {
     let event;
+
     if (!endpointSecret) {
+      // useful for quick local tests without signing
       event = JSON.parse(req.body.toString());
     } else {
       const sig = req.headers["stripe-signature"];
-      event = Stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
+      event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
     }
+
+    console.log("[webhook] type,", event.type);
 
     if (event.type === "checkout.session.completed") {
       const session = event.data.object;
       try {
         upsertOrderFromSession(session);
+        console.log("[webhook] upsertOrderFromSession ok");
       } catch (e) {
-        console.error("order upsert failed", e);
+        console.error("[webhook] upsert failed", e);
       }
     }
 
     return res.json({ received: true });
   } catch (e) {
-    console.error("webhook error", e);
+    console.error("[webhook] error", e);
     return res.status(400).send(`Webhook Error: ${e.message}`);
   }
 });
 
-// Now JSON parser for the rest
+// JSON parser comes after the webhook
 app.use(express.json({ limit: "2mb" }));
 
-// Google Drive service account (uses GOOGLE_APPLICATION_CREDENTIALS path)
+// Google Drive service account
 const saPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 const hasSaKey = !!saPath && fs.existsSync(saPath);
 
@@ -73,14 +93,17 @@ if (hasSaKey) {
     scopes: ["https://www.googleapis.com/auth/drive.file"]
   });
   drive = google.drive({ version: "v3", auth });
+} else {
+  console.log("[drive] no service account key, will use GAS if configured");
 }
 
-// Friendly root route and debug
-app.get("/", (_, res) => res.json({ ok: true, service: "api", time: new Date().toISOString() }));
-app.get("/api/health", (_, res) => res.json({ ok: true }));
-app.get("/api/debug", (_, res) =>
+// Friendly health and debug
+app.get("/", (_req, res) => res.json({ ok: true, service: "api", time: new Date().toISOString() }));
+app.get("/api/health", (_req, res) => res.json({ ok: true }));
+app.get("/api/debug", (_req, res) =>
   res.json({
     webhookHasSecret: !!process.env.STRIPE_WEBHOOK_SECRET,
+    webhookPath: WEBHOOK_PATH,
     clientUrl: CLIENT_URL || null,
     priceCents: process.env.PRICE_CENTS ? Number(process.env.PRICE_CENTS) : null,
     currency: process.env.CURRENCY || null,
@@ -90,7 +113,7 @@ app.get("/api/debug", (_, res) =>
 );
 
 // Quick Apps Script test
-app.get("/api/gas-test", async (_, res) => {
+app.get("/api/gas-test", async (_req, res) => {
   try {
     if (!process.env.GAS_WEBAPP_URL) {
       return res.status(500).json({ error: "no_gas_webapp", hint: "Set GAS_WEBAPP_URL in env" });
@@ -152,23 +175,7 @@ app.post("/api/checkout", async (req, res) => {
       customer_creation: "always",
       phone_number_collection: { enabled: true },
       shipping_address_collection: {
-        allowed_countries: [
-          "NZ",
-          "AU",
-          "US",
-          "CA",
-          "GB",
-          "IE",
-          "DE",
-          "FR",
-          "NL",
-          "BE",
-          "SE",
-          "NO",
-          "DK",
-          "ES",
-          "IT"
-        ]
+        allowed_countries: ["NZ", "AU", "US", "CA", "GB", "IE", "DE", "FR", "NL", "BE", "SE", "NO", "DK", "ES", "IT"]
       },
       success_url: `${CLIENT_URL}/?success=1&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${CLIENT_URL}/?canceled=1`,
@@ -179,7 +186,7 @@ app.post("/api/checkout", async (req, res) => {
       }
     });
 
-    // Persist the full design locally keyed by session id
+    // persist the full design locally keyed by session id
     saveDraftOrder(session.id, {
       packKey,
       modelKey,
@@ -229,7 +236,9 @@ function extractColorNameFromParams(paramsJson) {
 const uploadDir = "uploads";
 try {
   fs.mkdirSync(uploadDir, { recursive: true });
-} catch { /* ignore */ }
+} catch {
+  // ignore
+}
 
 // Upload STL to Drive, idempotent per session, names file with order id
 const upload = multer({ dest: uploadDir + "/" });
@@ -381,12 +390,13 @@ app.post("/api/upload", upload.single("file"), async (req, res) => {
 });
 
 // Admin endpoints
-app.get("/api/orders", (_, res) => res.json({ ok: true, orders: listOrders(200) }));
+app.get("/api/orders", (_req, res) => res.json({ ok: true, orders: listOrders(200) }));
 app.get("/api/orders/:sessionId", (req, res) => {
   const row = getOrderBySession(req.params.sessionId);
   if (!row) return res.status(404).json({ error: "not_found" });
   res.json({ ok: true, order: row });
 });
 
+// listen
 const port = Number(process.env.PORT || 8787);
-app.listen(port, () => console.log(`server on http://localhost:${port}`));
+app.listen(port, () => console.log(`server on ${port}`));
