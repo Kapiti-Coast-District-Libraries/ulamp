@@ -280,6 +280,28 @@ export default function Designer() {
     run();
   }, []);
 
+  // auto close the small checkout popup when user returns from checkout or navigates back
+  React.useEffect(() => {
+    const closePrep = () => setPreparingOpen(false);
+
+    const onPageShow = () => closePrep(); // bfcache return
+    const onPopState = () => closePrep(); // browser back or forward
+    const onVisibility = () => { if (!document.hidden) closePrep(); };
+
+    window.addEventListener("pageshow", onPageShow);
+    window.addEventListener("popstate", onPopState);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    // also close once on mount
+    closePrep();
+
+    return () => {
+      window.removeEventListener("pageshow", onPageShow);
+      window.removeEventListener("popstate", onPopState);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
   const onCheckout = async () => {
     try {
       setPreparingMsg("Preparing your file...");
