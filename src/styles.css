@@ -1,185 +1,94 @@
-/* src/styles.css */
-:root { --bg:#f7f7fb; --card:#fff; --ink:#111; --muted:#666; --line:#e6e6ef; }
-* { box-sizing: border-box; }
-html, body, #root { height: 100%; }
-body { margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color: var(--ink); background: var(--bg); }
-.app { display: flex; flex-direction: column; min-height: 100%; }
-
-.topbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--card); position: sticky; top:0; z-index: 10; }
-.brand { font-weight: 600; }
-.actions button { margin-left: 8px; }
-
-.layout {
-  display: grid;
-  grid-template-columns: 320px 1fr;
-  gap: 16px;
-  padding: 16px;
-  height: calc(100vh - 56px); /* fill below the header */
-}
-
-.panel { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px; overflow: auto; }
-.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
-.field label { font-size: 12px; color: var(--muted); }
-.field input[type="number"], .field select, .field input[type="file"] { padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; }
-.card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px; }
-.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
-
-.viewport {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 14px;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.viewportWrap {
-  flex: 1 1 auto;
-  min-height: 0;
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
-.footer { font-size: 12px; color: var(--muted); padding: 12px 16px; }
-button { padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line); background: #fff; cursor: pointer; }
-button:hover { background: #f3f3f7; }
-
-/* full page upload modal */
-.upload-modal {
+/* ===== Welcome modal, full page overlay ===== */
+.welcome-modal {
   position: fixed;
   inset: 0;
   background: rgba(10, 12, 16, 0.72);
   display: grid;
   place-items: center;
-  z-index: 9999;
+  z-index: 9998; /* below upload modal which is 9999 */
   backdrop-filter: blur(2px);
 }
-.upload-card {
-  width: min(560px, 92vw);
+
+.welcome-card {
+  width: min(760px, 94vw);
   background: #0f1116;
   color: #f5f7fb;
   border: 1px solid #2a2f3a;
   border-radius: 16px;
-  padding: 20px 22px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  padding: 22px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+  position: relative;
 }
-.upload-title {
-  font-size: 20px;
-  font-weight: 700;
-  margin-bottom: 8px;
+
+.modal-close {
+  position: absolute;
+  right: 10px;
+  top: 8px;
+  border: 0;
+  background: transparent;
+  color: #c6d0e0;
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
 }
-.upload-steps {
+
+.welcome-title {
+  font-size: 22px;
+  font-weight: 800;
+  margin: 2px 0 10px 0;
+}
+
+.welcome-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 6px 16px;
-  margin: 8px 0 12px 0;
+  gap: 10px 14px;
+  margin: 10px 0 14px 0;
 }
-.step {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  opacity: 0.5;
-}
-.step.active { opacity: 0.9; }
-.step.done { opacity: 1; }
-.step .dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  background: #616c7d;
-}
-.step.active .dot { background: #89a7ff; }
-.step.done .dot { background: #4ade80; }
-.step .label { font-size: 13px; }
-.upload-bar {
+.welcome-figure { margin: 0; text-align: center; }
+.welcome-image {
   width: 100%;
-  height: 10px;
-  background: #1a1f29;
+  height: 180px;
+  object-fit: cover;
+  border-radius: 12px;
   border: 1px solid #2a2f3a;
-  border-radius: 999px;
-  overflow: hidden;
 }
-.upload-bar-fill {
-  height: 100%;
-  width: 0%;
-  background: linear-gradient(90deg, #7aa2ff, #4ade80);
-  transition: width 140ms linear;
-}
-.upload-message {
-  font-size: 13px;
-  margin-top: 10px;
-  color: #c6d0e0;
-}
-.upload-hint {
+.welcome-figure figcaption {
   font-size: 12px;
-  margin-top: 6px;
   color: #98a2b3;
+  margin-top: 6px;
 }
-.upload-actions {
+
+.welcome-steps {
+  display: grid;
+  gap: 8px;
+  margin: 8px 0 6px 0;
+  padding-left: 18px;
+}
+.welcome-steps li {
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+.welcome-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 14px;
-}
-.upload-actions button[disabled] {
-  opacity: 0.5;
-  cursor: not-allowed;
+  margin-top: 16px;
 }
 
-/* Mobile layout improvement: move buttons between viewer and controls */
-@media (max-width: 768px) {
-  .layout {
-    display: flex;
-    flex-direction: column;
-    height: auto;
-    padding: 8px;
-  }
-
-  .viewport {
-    order: 1;
-    height: 60vh;
-    min-height: 300px;
-  }
-
-  /* Move the topbar buttons below the viewport */
-  .actions {
-    order: 2;
-    display: flex;
-    justify-content: center;
-    gap: 8px;
-    margin: 10px 0;
-  }
-
-  /* Hide brand name on mobile if needed */
-  .brand {
-    display: none;
-  }
-
-  /* Keep the control panel (sliders) last */
-  .panel {
-    order: 3;
-    margin-top: 8px;
-    height: auto;
-    max-height: 40vh;
-    overflow-y: auto;
-  }
-
-  .topbar {
-    flex-direction: column;
-    align-items: center;
-    border: none;
-    background: none;
-    padding: 0;
-  }
-
-  .footer {
-    position: static;
-  }
+/* Button variant for dark card primary action */
+.welcome-actions .primary {
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid #2a2f3a;
+  background: #111622;
+  color: #fff;
+  cursor: pointer;
 }
-/* Full page intro, first visit only */
-.intro-modal {
+.welcome-actions .primary:hover { background: #151a29; }
+
+/* ===== Small preparing modal for checkout ===== */
+.checkout-modal {
   position: fixed;
   inset: 0;
   background: rgba(10, 12, 16, 0.72);
@@ -189,71 +98,50 @@ button:hover { background: #f3f3f7; }
   backdrop-filter: blur(2px);
 }
 
-.intro-card {
-  width: min(760px, 94vw);
+.checkout-card {
   background: #0f1116;
   color: #f5f7fb;
   border: 1px solid #2a2f3a;
-  border-radius: 16px;
-  padding: 22px;
+  width: min(420px, 92vw);
+  border-radius: 14px;
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
   box-shadow: 0 10px 30px rgba(0,0,0,0.45);
 }
 
-.intro-title {
-  font-size: 22px;
-  font-weight: 800;
-  margin: 2px 0 8px 0;
-}
-
-.intro-sub {
-  font-size: 14px;
-  color: #c6d0e0;
-  margin-bottom: 14px;
-}
-
-.intro-gallery {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px 14px;
-  margin: 10px 0 14px 0;
-}
-.intro-gallery img {
-  width: 100%;
-  height: 180px;
-  object-fit: cover;
-  border-radius: 12px;
-  border: 1px solid #2a2f3a;
-}
-
-.intro-steps {
-  display: grid;
-  gap: 8px;
-  margin: 10px 0 6px 0;
-}
-.intro-step {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.intro-step .dot {
-  width: 10px;
-  height: 10px;
+.spinner {
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
-  background: #89a7ff;
-  flex: 0 0 10px;
+  border: 3px solid #2a2f3a;
+  border-top-color: #7aa2ff;
+  animation: spin 0.9s linear infinite;
 }
-.intro-step .text {
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+}
+
+.checkout-title {
+  font-weight: 700;
+  margin-bottom: 2px;
   font-size: 15px;
 }
-
-.intro-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 16px;
-}
-.intro-actions .secondary {
-  background: transparent;
+.checkout-sub {
+  font-size: 13px;
   color: #c6d0e0;
 }
+
+/* ===== Mobile tweaks ===== */
+@media (max-width: 768px) {
+  .welcome-grid {
+    grid-template-columns: 1fr;
+  }
+  .welcome-image { height: 160px; }
+  .welcome-card { padding: 18px; }
+  .checkout-card { width: min(480px, 92vw); }
+}
+
 
