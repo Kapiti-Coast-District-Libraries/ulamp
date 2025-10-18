@@ -40,49 +40,6 @@ function Step({ label, active, done }) {
   );
 }
 
-/* Uses your existing .intro-* styles */
-function IntroModal({ open, onClose }) {
-  if (!open) return null;
-  return (
-    <div className="intro-modal" role="dialog" aria-modal="true" aria-label="Welcome">
-      <div className="intro-card">
-        <h2 className="intro-title">Welcome, design your one of a kind lamp</h2>
-        <p className="intro-sub">A quick guide before you start</p>
-
-        <div className="intro-gallery">
-          {/* Replace with your images */}
-          <img src="/images/example-1.jpg" alt="Example lamp 1" />
-          <img src="/images/example-2.jpg" alt="Example lamp 2" />
-        </div>
-
-        <div className="intro-steps">
-          <div className="intro-step">
-            <div className="dot" />
-            <div className="text">Design your lamp, all numbers are in millimeters, so set the exact size you want</div>
-          </div>
-          <div className="intro-step">
-            <div className="dot" />
-            <div className="text">Click Checkout and we will prepare your file</div>
-          </div>
-          <div className="intro-step">
-            <div className="dot" />
-            <div className="text">Pay and wait a few seconds while your file is sent to us</div>
-          </div>
-          <div className="intro-step">
-            <div className="dot" />
-            <div className="text">We 3D print your one of a kind lamp and post it to you</div>
-          </div>
-        </div>
-
-        <div className="intro-actions">
-          <button className="secondary" onClick={onClose}>Close</button>
-          <button onClick={onClose}>Start designing</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /* Small preparing popup, minimal new CSS, dark scheme like your upload modal */
 function PreparingModal({ open, message = "Preparing your file..." }) {
   if (!open) return null;
@@ -121,14 +78,13 @@ export default function Designer() {
   const [colorHex, setColorHex] = React.useState(palette[0]?.value || "#dddddd");
   const [colorName, setColorName] = React.useState(palette[0]?.name || "Color");
 
-  // existing modal
+  // existing upload modal
   const [modalOpen, setModalOpen] = React.useState(false);
   const [modalStage, setModalStage] = React.useState(0);
   const [modalPercent, setModalPercent] = React.useState(0);
   const [modalCanClose, setModalCanClose] = React.useState(false);
 
-  // new popups
-  const [welcomeOpen, setWelcomeOpen] = React.useState(true);
+  // small preparing modal
   const [preparingOpen, setPreparingOpen] = React.useState(false);
   const [preparingMsg, setPreparingMsg] = React.useState("Preparing your file...");
 
@@ -137,9 +93,6 @@ export default function Designer() {
 
   // prevent pack change effect from wiping randomized params once
   const skipNextDefaultsRef = React.useRef(false);
-
-  // show intro on load, every time as requested
-  React.useEffect(() => { setWelcomeOpen(true); }, []);
 
   React.useEffect(() => {
     if (skipNextDefaultsRef.current) {
@@ -229,14 +182,15 @@ export default function Designer() {
     if (ranSuccessRef.current) return;
     ranSuccessRef.current = true;
 
+    // show the upload modal immediately so it is the first thing the user sees
+    setModalOpen(true);
+    setModalCanClose(false);
+    setModalStage(1);
+    setModalPercent(15);
+    setUploadMsg("Verifying payment...");
+
     const run = async () => {
       try {
-        setModalOpen(true);
-        setModalCanClose(false);
-        setModalStage(1);
-        setModalPercent(15);
-        setUploadMsg("Verifying payment...");
-
         const r = await fetch(`/api/session/${sessionId}`);
         if (!r.ok) {
           setUploadMsg(`Could not verify payment, ${r.status}`);
@@ -399,8 +353,7 @@ export default function Designer() {
         onCancel={() => setModalOpen(false)}
       />
 
-      {/* New popups */}
-      <IntroModal open={welcomeOpen} onClose={() => setWelcomeOpen(false)} />
+      {/* Small preparing popup during checkout */}
       <PreparingModal open={preparingOpen} message={preparingMsg} />
     </div>
   );
