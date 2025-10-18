@@ -40,62 +40,59 @@ function Step({ label, active, done }) {
   );
 }
 
-/* NEW: Welcome modal shown on every load */
-function WelcomeModal({ open, onClose }) {
+/* Uses your existing .intro-* styles */
+function IntroModal({ open, onClose }) {
   if (!open) return null;
   return (
-    <div className="welcome-modal">
-      <div className="welcome-card">
-        <button className="modal-close" aria-label="Close" onClick={onClose}>×</button>
-        <h2 className="welcome-title">Welcome, design your one of a kind lamp</h2>
+    <div className="intro-modal" role="dialog" aria-modal="true" aria-label="Welcome">
+      <div className="intro-card">
+        <h2 className="intro-title">Welcome, design your one of a kind lamp</h2>
+        <p className="intro-sub">A quick guide before you start</p>
 
-        <div className="welcome-grid">
-          {/* Replace these with your own images */}
-          <figure className="welcome-figure">
-            <img
-              src="/images/example-1.jpg"
-              alt="Example lamp 1"
-              className="welcome-image"
-              loading="eager"
-            />
-            <figcaption>Example finish</figcaption>
-          </figure>
-          <figure className="welcome-figure">
-            <img
-              src="/images/example-2.jpg"
-              alt="Example lamp 2"
-              className="welcome-image"
-              loading="eager"
-            />
-            <figcaption>Pattern detail</figcaption>
-          </figure>
+        <div className="intro-gallery">
+          {/* Replace with your images */}
+          <img src="/images/example-1.jpg" alt="Example lamp 1" />
+          <img src="/images/example-2.jpg" alt="Example lamp 2" />
         </div>
 
-        <ol className="welcome-steps">
-          <li>Design your lamp, all numbers are in millimeters, so pick the exact size you want</li>
-          <li>Click Checkout and we will prepare your file</li>
-          <li>Pay and wait a few seconds while your file is sent to us</li>
-          <li>We 3D print your one of a kind lamp and post it to you</li>
-        </ol>
+        <div className="intro-steps">
+          <div className="intro-step">
+            <div className="dot" />
+            <div className="text">Design your lamp, all numbers are in millimeters, so set the exact size you want</div>
+          </div>
+          <div className="intro-step">
+            <div className="dot" />
+            <div className="text">Click Checkout and we will prepare your file</div>
+          </div>
+          <div className="intro-step">
+            <div className="dot" />
+            <div className="text">Pay and wait a few seconds while your file is sent to us</div>
+          </div>
+          <div className="intro-step">
+            <div className="dot" />
+            <div className="text">We 3D print your one of a kind lamp and post it to you</div>
+          </div>
+        </div>
 
-        <div className="welcome-actions">
-          <button onClick={onClose} className="primary">Start designing</button>
+        <div className="intro-actions">
+          <button className="secondary" onClick={onClose}>Close</button>
+          <button onClick={onClose}>Start designing</button>
         </div>
       </div>
     </div>
   );
 }
 
-/* NEW: Small preparing modal during checkout POST */
-function CheckoutPreparingModal({ open, message = "Preparing your file..." }) {
+/* Small preparing popup, minimal new CSS, dark scheme like your upload modal */
+function PreparingModal({ open, message = "Preparing your file..." }) {
   if (!open) return null;
   return (
-    <div className="checkout-modal">
-      <div className="checkout-card">
-        <div className="spinner" aria-hidden="true" />
-        <div className="checkout-text">
-          <div className="checkout-title">We are preparing your file</div>
-          <div className="checkout-sub">{message}</div>
+    <div className="prep-modal" role="status" aria-live="polite">
+      <div className="prep-card">
+        <div className="prep-spinner" aria-hidden="true" />
+        <div>
+          <div className="prep-title">We are preparing your file</div>
+          <div className="prep-sub">{message}</div>
         </div>
       </div>
     </div>
@@ -130,7 +127,7 @@ export default function Designer() {
   const [modalPercent, setModalPercent] = React.useState(0);
   const [modalCanClose, setModalCanClose] = React.useState(false);
 
-  // NEW: welcome modal and preparing modal
+  // new popups
   const [welcomeOpen, setWelcomeOpen] = React.useState(true);
   const [preparingOpen, setPreparingOpen] = React.useState(false);
   const [preparingMsg, setPreparingMsg] = React.useState("Preparing your file...");
@@ -141,10 +138,8 @@ export default function Designer() {
   // prevent pack change effect from wiping randomized params once
   const skipNextDefaultsRef = React.useRef(false);
 
-  // NEW: always open welcome on load
-  React.useEffect(() => {
-    setWelcomeOpen(true);
-  }, []);
+  // show intro on load, every time as requested
+  React.useEffect(() => { setWelcomeOpen(true); }, []);
 
   React.useEffect(() => {
     if (skipNextDefaultsRef.current) {
@@ -311,7 +306,6 @@ export default function Designer() {
       const js = await r.json();
       if (js?.url) {
         setPreparingMsg("Redirecting to checkout...");
-        // keep the modal visible until navigation starts
         window.location.href = js.url;
       } else {
         setPreparingOpen(false);
@@ -374,7 +368,6 @@ export default function Designer() {
 
       <footer className="footer">Built with React and Three.js</footer>
 
-      {/* Existing post payment modal */}
       <UploadModal
         open={modalOpen}
         stage={modalStage}
@@ -384,9 +377,9 @@ export default function Designer() {
         onCancel={() => setModalOpen(false)}
       />
 
-      {/* NEW modals */}
-      <WelcomeModal open={welcomeOpen} onClose={() => setWelcomeOpen(false)} />
-      <CheckoutPreparingModal open={preparingOpen} message={preparingMsg} />
+      {/* New popups */}
+      <IntroModal open={welcomeOpen} onClose={() => setWelcomeOpen(false)} />
+      <PreparingModal open={preparingOpen} message={preparingMsg} />
     </div>
   );
 }
