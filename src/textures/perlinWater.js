@@ -1,11 +1,14 @@
 // src/textures/perlinWater.js
-// Fine Perlin style water ripples, outward emboss only.
-// Seamless around the circumference, height-aware, print safe.
+// Fine Perlin style water ripples, balanced option removed, no inward thinning control, seed removed, ridged crests always on.
+// Seamless around the circumference, height aware, print safe.
 
 import * as THREE from "three";
 
 const MAX_DIAMETER_MM = 240;
 function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
+
+// Hidden option, change here to set your default without exposing a UI control
+const DEFAULT_BALANCED = true;
 
 /* ---------- Seeded Perlin noise, 3D, fBm ---------- */
 function makePerlin(seed = 1337) {
@@ -88,19 +91,20 @@ function apply(geometry, p) {
   if (!pos || !nor) return geometry;
 
   // Controls
-  const depthMM   = clamp(p.t_perlin_depth ?? 2.0, 0, 3.0);   // push outward, mm
-  const scaleMM   = clamp(p.t_perlin_scale ?? 10, 4, 20);     // horizontal scale, mm
-  const vertScale = clamp(p.t_perlin_vertical ?? 1.0, 0.25, 2); // vertical scale factor
-  const octaves   = clamp(Math.floor(p.t_perlin_octaves ?? 4), 1, 6);
-  const lacun     = clamp(p.t_perlin_lacunarity ?? 2.0, 1.5, 3.0);
-  const gain      = clamp(p.t_perlin_gain ?? 0.55, 0.3, 0.9);
-  const contrast  = clamp(p.t_perlin_contrast ?? 1.2, 0.5, 2.0); // 1 means neutral
-  const ridged    = !!p.t_perlin_ridged; // true gives crisper crests, water-like
-  const fadeTop   = clamp(p.t_perlin_fadeTop ?? 0.05, 0, 0.5);
-  const fadeBottom= clamp(p.t_perlin_fadeBottom ?? 0.05, 0, 0.5);
-  const seed      = Math.floor(p.t_perlin_seed ?? 1337);
+  const depthMM    = clamp(p.t_perlin_depth ?? 2.0, 0, 3.0);   // amplitude in mm
+  const scaleMM    = clamp(p.t_perlin_scale ?? 10, 4, 20);     // horizontal scale in mm
+  const vertScale  = clamp(p.t_perlin_vertical ?? 1.0, 0.25, 2); // vertical scale factor
+  const octaves    = clamp(Math.floor(p.t_perlin_octaves ?? 4), 1, 6);
+  const lacun      = clamp(p.t_perlin_lacunarity ?? 2.0, 1.5, 3.0);
+  const gain       = clamp(p.t_perlin_gain ?? 0.55, 0.3, 0.9);
+  const contrast   = clamp(p.t_perlin_contrast ?? 1.2, 0.5, 2.0); // 1 is neutral
+  const fadeTop    = clamp(p.t_perlin_fadeTop ?? 0.05, 0, 0.5);
+  const fadeBottom = clamp(p.t_perlin_fadeBottom ?? 0.05, 0, 0.5);
+  const balanced   = (p.t_perlin_balanced ?? DEFAULT_BALANCED) ? true : false;
 
-  const { fbm3 } = makePerlin(seed);
+  // No seed control, fixed internal seed, and ridged always on
+  const { fbm3 } = makePerlin();
+  const ridged = true;
 
   const maxR = MAX_DIAMETER_MM / 2;
   const v = new THREE.Vector3();
@@ -126,8 +130,7 @@ function apply(geometry, p) {
     // only outward facing verts so we do not affect inner wall
     if (n.dot(radial) <= 0.0) continue;
 
-    // cylindrical, seamless around the wrap:
-    // use (r*cosθ, r*sinθ, y) in mm, scaled to control feature size
+    // cylindrical, seamless around the wrap
     let theta = Math.atan2(v.z, v.x);
     if (theta < 0) theta += Math.PI * 2;
 
@@ -135,7 +138,7 @@ function apply(geometry, p) {
     const nz = (r * Math.sin(theta)) / scaleMM;
     const ny = (v.y - slab) / (scaleMM * vertScale);
 
-    // fBm value 0..1
+    // fBm value 0..1, ridged crests
     let t = fbm3(nx, ny, nz, octaves, lacun, gain, ridged);
 
     // gentle fade near bottom and top edges
@@ -147,17 +150,22 @@ function apply(geometry, p) {
     // contrast curve, 1 is neutral
     if (contrast !== 1) {
       const c = contrast;
-      // remap 0..1 through a midpoint preserving power curve
       const mid = 0.5;
       if (t >= mid) t = mid + Math.pow((t - mid) * 2, c) * 0.5;
       else t = mid - Math.pow((mid - t) * 2, c) * 0.5;
     }
 
-    // push outward, stay inside 240 mm envelope
-    const slack = Math.max(0, maxR - r);
-    const push = Math.min(depthMM, slack) * t;
+    // Balanced option, inward still locked to zero
+    const s = balanced ? (t - 0.5) * 2.0 : t; // signed when balanced, 0..1 otherwise
 
-    if (push > 0) {
+    // outward limit, still respecting the 240 mm envelope
+    const slack = Math.max(0, maxR - r);
+    const outward = Math.min(depthMM, slack) * Math.max(0, s);
+
+    // inward is always zero, max inward auto set to 0
+    const push = outward;
+
+    if (push !== 0) {
       v.addScaledVector(radial, push);
       pos.setXYZ(i, v.x, v.y, v.z);
     }
@@ -172,30 +180,28 @@ export default {
   id: "perlinWater",
   label: "Perlin water",
   defaults: {
-    t_perlin_depth: 2.0,       // mm
-    t_perlin_scale: 18,        // mm
-    t_perlin_vertical: 1.0,    // factor
+    t_perlin_depth: 0.7,        // mm, smaller for lamp translucency
+    t_perlin_scale: 18,         // mm
+    t_perlin_vertical: 1.0,     // factor
     t_perlin_octaves: 4,
     t_perlin_lacunarity: 2.0,
     t_perlin_gain: 0.55,
-    t_perlin_contrast: 1.2,
-    t_perlin_ridged: true,
-    t_perlin_fadeTop: 0.05,
-    t_perlin_fadeBottom: 0.05,
-    t_perlin_seed: 1337,
+    t_perlin_contrast: 1.6,
+    t_perlin_fadeTop: 0.1,
+    t_perlin_fadeBottom: 0.1,
+    // Hidden, slider removed. Change DEFAULT_BALANCED above or this default to flip behavior
+    t_perlin_balanced: true,
   },
   schema: [
-    { key: "t_perlin_depth",     label: "Depth, mm",          type: "range", min: 0,   max: 3.0, step: 0.05 },
-    { key: "t_perlin_scale",     label: "Scale, mm",          type: "range", min: 4,   max: 60,  step: 0.5 },
-    { key: "t_perlin_vertical",  label: "Vertical scale",     type: "range", min: 0.25,max: 4.0, step: 0.05 },
-    { key: "t_perlin_octaves",   label: "Octaves",            type: "range", min: 1,   max: 6,   step: 1 },
-    { key: "t_perlin_lacunarity",label: "Lacunarity",         type: "range", min: 1.5, max: 3.0, step: 0.1 },
-    { key: "t_perlin_gain",      label: "Gain",               type: "range", min: 0.3, max: 0.9, step: 0.05 },
-    { key: "t_perlin_contrast",  label: "Contrast",           type: "range", min: 0.5, max: 2.0, step: 0.05 },
-    { key: "t_perlin_ridged",    label: "Ridged crests",      type: "checkbox" },
-    { key: "t_perlin_fadeTop",   label: "Fade near top",      type: "range", min: 0,   max: 0.5, step: 0.01 },
-    { key: "t_perlin_fadeBottom",label: "Fade near bottom",   type: "range", min: 0,   max: 0.5, step: 0.01 },
-    { key: "t_perlin_seed",      label: "Seed",               type: "range", min: 0,   max: 9999, step: 1 },
+    { key: "t_perlin_depth",      label: "Depth, mm",        type: "range", min: 0,   max: 3.0, step: 0.05 },
+    { key: "t_perlin_scale",      label: "Scale, mm",        type: "range", min: 4,   max: 60,  step: 0.5 },
+    { key: "t_perlin_vertical",   label: "Vertical scale",   type: "range", min: 0.25,max: 4.0, step: 0.05 },
+    { key: "t_perlin_octaves",    label: "Octaves",          type: "range", min: 1,   max: 6,   step: 1 },
+    { key: "t_perlin_lacunarity", label: "Lacunarity",       type: "range", min: 1.5, max: 3.0, step: 0.1 },
+    { key: "t_perlin_gain",       label: "Gain",             type: "range", min: 0.3, max: 0.9, step: 0.05 },
+    { key: "t_perlin_contrast",   label: "Contrast",         type: "range", min: 0.5, max: 2.0, step: 0.05 },
+    { key: "t_perlin_fadeTop",    label: "Fade near top",    type: "range", min: 0,   max: 0.5, step: 0.01 },
+    { key: "t_perlin_fadeBottom", label: "Fade near bottom", type: "range", min: 0,   max: 0.5, step: 0.01 },
   ],
   headroom: (p) => clamp(p.t_perlin_depth ?? 2.0, 0, 3.0),
   apply,
