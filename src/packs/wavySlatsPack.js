@@ -7,7 +7,7 @@ import { textures, textureOptions } from "../textures";
 
 const MAX_SIZE = 240;
 const MIN_THICK = 0.8;
-const MAX_THICK = 1.6; // allow a touch thicker if needed
+const MAX_THICK = 1.1; // allow a touch thicker if needed
 const BOTTOM_THICK = 3;
 const FIXED_HOLE_DIAMETER = 80;
 
@@ -247,7 +247,7 @@ function defaultsFactory() {
   const firstTex = textureOptions[0]?.value ?? "none";
   const d = {
     height: 220,
-    wall: 1.2,
+    wall: 0.8,
 
     baseRadius: 112,
     topRadius: 80,
