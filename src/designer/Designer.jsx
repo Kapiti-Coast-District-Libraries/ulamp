@@ -273,7 +273,7 @@ return () => window.removeEventListener("beforeunload", onBeforeUnload);
         }
 
         setModalStage(3);
-all       setModalPercent(100);
+        setModalPercent(100);
         setUploadMsg("Order recorded. You can close this window now.");
         setTimeout(() => setModalCanClose(true), 600);
       } catch (e) {
