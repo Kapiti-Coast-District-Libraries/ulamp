@@ -85,7 +85,7 @@ export default {
   label: "Spiral bands",
   defaults: {
     t_spiral_bands: 8,
-    t_spiral_pitch: 30,       // mm per revolution
+    t_spiral_pitch: 45,       // mm per revolution
     t_spiral_depth: 2.5,      // mm outward
     t_spiral_sharpness: 3,
     t_spiral_dual: false,
