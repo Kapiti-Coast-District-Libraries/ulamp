@@ -19,7 +19,7 @@ function apply(geometry, p) {
   const pitch = clamp(p.t_spiral_pitch ?? 30, 5, 60);                 // mm per full revolution
   const sharp = clamp(Math.floor(p.t_spiral_sharpness ?? 3), 1, 8);
   const depth = clamp(p.t_spiral_depth ?? 2.5, 0, 3.0);
-  const dual  = !!p.t_spiral_dual;
+  const dual = p.t_spiral_dual ?? false;
   const fadeMM = clamp(p.t_spiral_fade_bottom_mm ?? 5, 5, 40);        // 0 means no fade
   const kY = (2 * Math.PI) / pitch;
 
