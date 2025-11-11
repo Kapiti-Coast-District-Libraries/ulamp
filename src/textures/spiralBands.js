@@ -88,7 +88,7 @@ export default {
     t_spiral_pitch: 30,       // mm per revolution
     t_spiral_depth: 2.5,      // mm outward
     t_spiral_sharpness: 3,
-    t_spiral_dual: true,
+    t_spiral_dual: false,
     t_spiral_fade_bottom_mm: 5, // 0 means no bottom fade
   },
   schema: [
