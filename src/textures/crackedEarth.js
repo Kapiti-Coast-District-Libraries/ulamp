@@ -1,115 +1,112 @@
-// src/textures/waveInterference.js
+// src/textures/hammered.js
 import * as THREE from "three";
 
 const MAX_DIAMETER_MM = 240;
 function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
-
-// Smoothstep 0..1
 function smooth01(u) {
-  const x = clamp(u, 0, 1);
-  return x * x * (3 - 2 * x);
+  const x = clamp(u, 0, 1);
+  return x * x * (3 - 2 * x);
+}
+
+/**
+ * A simple 3D hash function to generate pseudo-random "value noise".
+ * It takes three numbers and returns a consistent random-looking
+ * value between 0.0 and 1.0.
+ */
+function hash3D(x, y, z) {
+  // Using arbitrary large-ish prime-like numbers for mixing
+  let n = x * 12.9898 + y * 78.233 + z * 54.321;
+  n = Math.sin(n) * 43758.5453123;
+  return n - Math.floor(n); // Return fractional part (0.0 to 1.0)
 }
 
 function apply(geometry, p) {
-  const pos = geometry.attributes.position;
-  const nor = geometry.attributes.normal;
-  if (!pos || !nor) return geometry;
+  const pos = geometry.attributes.position;
+  const nor = geometry.attributes.normal;
+  if (!pos || !nor) return geometry;
 
-  // Wave 1 params
-  const bands1 = clamp(Math.floor(p.t_wave1_bands ?? 8), 2, 64);
-  const pitch1 = clamp(p.t_wave1_pitch ?? 30, 5, 60);
-  const kY1 = (2 * Math.PI) / pitch1;
+  // NEW: Parameters for hammered look
+  const bands = clamp(p.t_hammered_bands ?? 50, 5, 150); // Horizontal "count" of dents
+  const pitch = clamp(p.t_hammered_pitch ?? 15, 2, 50);  // Vertical "size" of dents
+  const sharp = clamp(Math.floor(p.t_hammered_sharpness ?? 1), 1, 5);
+  const depth = clamp(p.t_hammered_depth ?? 0.8, 0, 2.0);
+  const fadeMM = clamp(p.t_hammered_fade_bottom_mm ?? 5, 5, 40);
+  
+  const v_scale = 1.0 / pitch; // Vertical frequency
 
-  // Wave 2 params
-  const bands2 = clamp(Math.floor(p.t_wave2_bands ?? 12), 2, 64);
-  const pitch2 = clamp(p.t_wave2_pitch ?? 45, 5, 60);
-  const kY2 = (2 * Math.PI) / pitch2;
+  const maxR = MAX_DIAMETER_MM / 2;
+  const v = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  const radial = new THREE.Vector3();
+  const bottomY = (p.bottom_thickness ?? 3) + 0.1;
 
-  // Shared params
-  const sharp = clamp(Math.floor(p.t_wave_sharpness ?? 3), 1, 8);
-  const depth = clamp(p.t_wave_depth ?? 1.5, 0, 3.0);
-  const fadeMM = clamp(p.t_wave_fade_bottom_mm ?? 5, 5, 40);
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+    n.fromBufferAttribute(nor, i);
 
-  const maxR = MAX_DIAMETER_MM / 2;
-  const v = new THREE.Vector3();
-  const n = new THREE.Vector3();
-  const radial = new THREE.Vector3();
-  const bottomY = (p.bottom_thickness ?? 3) + 0.1; // keep the solid slab clean
+    if (v.y <= bottomY) continue;
 
-  for (let i = 0; i < pos.count; i++) {
-    v.fromBufferAttribute(pos, i);
-    n.fromBufferAttribute(nor, i);
+    radial.set(v.x, 0, v.z);
+    const r = radial.length();
+    if (r < 1e-6) continue;
+    radial.multiplyScalar(1 / r);
 
-    if (v.y <= bottomY) continue;
+    if (n.dot(radial) <= 0.0) continue;
 
-    radial.set(v.x, 0, v.z);
-    const r = radial.length();
-    if (r < 1e-6) continue;
-    radial.multiplyScalar(1 / r);
+    // NEW: Use 3D noise input to avoid seams
+    // We use (cos, sin) of the angle to create a continuous
+    // input field around the cylinder's circumference.
+    const cosTheta = v.x / r;
+    const sinTheta = v.z / r;
+    
+    // Get a noise value (0.0 to 1.0) based on position
+    const noise_val = hash3D(
+      cosTheta * bands, 
+      sinTheta * bands, 
+      v.y * v_scale
+    );
 
-    // only outward facing vertices
-    if (n.dot(radial) <= 0.0) continue;
+    // Profile is the noise value, optionally sharpened
+    // sharpness = 1 gives soft, round dents
+    // sharpness > 1 gives sharper, smaller dents
+    let profile = Math.pow(noise_val, sharp);
 
-    // angle around, 0 to 2π
-    let theta = Math.atan2(v.z, v.x);
-    if (theta < 0) theta += Math.PI * 2;
+    if (fadeMM > 0) {
+      const u = (v.y - bottomY) / Math.max(1e-6, fadeMM);
+      profile *= smooth01(u);
+    }
 
-    // 1. Calculate both waves
-    // These are in the range [-1, 1]
-    const s1 = Math.cos(theta * bands1 + v.y * kY1);
-    const s2 = Math.cos(theta * bands2 + v.y * kY2); // Can use -theta for opposite spiral
+    const slack = Math.max(0, maxR - r);
+    const push = Math.min(depth, slack) * profile;
 
-    // 2. Combine them
-    // (s1 + s2) gives a combined wave in the range [-2, 2]
-    // We normalize it back to [-1, 1] by dividing by 2
-    const combinedWave = (s1 + s2) / 2.0;
+    if (push > 0) {
+      v.addScaledVector(radial, push);
+      pos.setXYZ(i, v.x, v.y, v.z);
+    }
+  }
 
-    // 3. Get the profile (only the positive part)
-    const ridge = Math.max(0, combinedWave); // Range [0, 1]
-    let profile = Math.pow(ridge, sharp);
-
-    // 4. Apply bottom fade
-    if (fadeMM > 0) {
-      const u = (v.y - bottomY) / Math.max(1e-6, fadeMM);
-      profile *= smooth01(u);
-    }
-
-    // 5. Calculate and apply the push
-    const slack = Math.max(0, maxR - r);
-    const push = Math.min(depth, slack) * profile;
-
-    if (push > 0) {
-      v.addScaledVector(radial, push);
-      pos.setXYZ(i, v.x, v.y, v.z);
-Next   }
-  }
-
-  pos.needsUpdate = true;
-  geometry.computeVertexNormals();
-  return geometry;
+  pos.needsUpdate = true;
+  geometry.computeVertexNormals();
+  return geometry;
 }
 
 export default {
-  id: "waveInterference",
-  label: "Wave Interference",
-  defaults: {
-    t_wave1_bands: 8,
-    t_wave1_pitch: 30,
-    t_wave2_bands: 12,
-    t_wave2_pitch: 45,
-    t_wave_depth: 1.5,
-    t_wave_sharpness: 3,
-    t_wave_fade_bottom_mm: 5,
-  },
-  schema: [
-    { key: "t_wave_depth",         label: "Depth, mm",         type: "range", min: 0,  max: 3.0, step: 0.05 },
-    { key: "t_wave_sharpness",     label: "Sharpness",         type: "range", min: 1,  max: 8,  step: 0.5 },
-    { key: "t_wave1_bands",         label: "Wave 1: Strands",    type: "range", min: 2,  max: 64, step: 1 },
-    { key: "t_wave1_pitch",         label: "Wave 1: Pitch, mm",  type: "range", min: 5,  max: 60, step: 0.5 },
-    { key: "t_wave2_bands",         label: "Wave 2: Strands",    type: "range", min: 2,  max: 64, step: 1 },
-    { key: "t_wave2_pitch",         label: "Wave 2: Pitch, mm",  type: "range", min: 5,  max: 60, step: 0.5 },
-    { key: "t_wave_fade_bottom_mm",label: "Fade bottom, mm",   type: "range", min: 5,  max: 40, step: 1 },
-  ],
-  headroom: (p) => clamp(p.t_wave_depth ?? 1.5, 0, 3.0),
-  apply,
+  id: "hammered",
+  label: "Hammered",
+  defaults: {
+    t_hammered_bands: 50,
+    t_hammered_pitch: 15,
+    t_hammered_depth: 0.8,
+    t_hammered_sharpness: 1, // Default to 1 for soft dents
+    t_hammered_fade_bottom_mm: 5,
+  },
+  schema: [
+    { key: "t_hammered_bands",       label: "Horizontal density",  type: "range", min: 5,  max: 150, step: 1 },
+    { key: "t_hammered_pitch",       label: "Vertical size, mm",   type: "range", min: 2,  max: 50,  step: 0.5 },
+    { key: "t_hammered_depth",       label: "Depth, mm",           type: "range", min: 0,  max: 2.0, step: 0.05 },
+    { key: "t_hammered_sharpness",   label: "Sharpness",           type: "range", min: 1,  max: 5,   step: 0.5 },
+    { key: "t_hammered_fade_bottom_mm",label: "Fade bottom, mm",   type: "range", min: 5,  max: 40,  step: 1 },
+  ],
+  headroom: (p) => clamp(p.t_hammered_depth ?? 0.8, 0, 2.0),
+  apply,
 };
