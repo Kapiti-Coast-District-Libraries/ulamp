@@ -105,7 +105,7 @@ export default function Designer() {
 
   const [packKey, setPackKey] = React.useState(firstPack);
   const safePackKey = packKeys.includes(packKey) ? packKey : firstPack;
-_ const pack = packs[safePackKey];
+  const pack = packs[safePackKey];
 
   const modelKey = Object.keys(pack.models)[0];
   const model = pack.models[modelKey];
