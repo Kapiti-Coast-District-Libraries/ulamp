@@ -72,7 +72,7 @@ function apply(geometry, p) {
 
     if (push > 0) {
       v.addScaledVector(radial, push);
-  D   pos.setXYZ(i, v.x, v.y, v.z);
+      pos.setXYZ(i, v.x, v.y, v.z);
     }
   }
 
