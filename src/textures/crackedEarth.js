@@ -1,4 +1,4 @@
-// src/textures/broadFolds.js
+// src/textures/constantFolds.js
 import * as THREE from "three";
 
 const MAX_DIAMETER_MM = 240;
@@ -10,10 +10,8 @@ function smooth01(u) {
 
 // ##################################################################
 // #               START: 3D SIMPLEX NOISE LIBRARY
-// #  This is needed to create smooth, continuous random values
+// #  (This is the same SimplexNoise class as the previous file)
 // ##################################################################
-// Ported from: https://github.com/jwagner/simplex-noise.js
-// This code is in the public domain.
 const F3 = 1.0 / 3.0;
 const G3 = 1.0 / 6.0;
 const G3_2 = G3 * 2.0;
@@ -130,14 +128,12 @@ function apply(geometry, p) {
   const nor = geometry.attributes.normal;
   if (!pos || !nor) return geometry;
 
-  // NEW: Size parameters define the "scale" of the folds
-  const h_size = clamp(p.t_fold_h_size ?? 80, 20, 200); // Horizontal feature size in mm
-  const v_size = clamp(p.t_fold_v_size ?? 60, 20, 200); // Vertical feature size in mm
-  const depth = clamp(p.t_fold_depth ?? 4.0, 0, 10.0); // Max in/out displacement
-  const sharp = clamp(p.t_fold_sharpness ?? 1.5, 1.0, 5.0); // 1=smooth, 3=sharp crease
+  const h_size = clamp(p.t_fold_h_size ?? 80, 20, 200);
+  const v_size = clamp(p.t_fold_v_size ?? 60, 20, 200);
+  const depth = clamp(p.t_fold_depth ?? 4.0, 0, 10.0);
+  const sharp = clamp(p.t_fold_sharpness ?? 1.5, 1.0, 5.0);
   const fadeMM = clamp(p.t_fold_fade_bottom_mm ?? 5, 5, 40);
   
-  // Convert size (mm) to frequency
   const h_freq = 1.0 / h_size;
   const v_freq = 1.0 / v_size;
 
@@ -155,40 +151,40 @@ function apply(geometry, p) {
     if (r < 1e-6) continue;
     _radial.multiplyScalar(1 / r);
 
-    if (_n.dot(_radial) <= 0.0) continue;
+    // --- FIX FOR CONSTANT THICKNESS ---
+    
+    // 1. REMOVED: The check for outward-facing normals.
+    // We now process *all* vertices (inner and outer).
+    // if (n.dot(radial) <= 0.0) continue; 
 
-    // --- NEW FOLD LOGIC ---
-    
-    // 1. Get noise input coordinates from the vertex's 3D position
-    // We use low frequencies to get large, smooth features
-    const noise_x = _v.x * h_freq;
+    // 2. CHANGED: Calculate noise coords based on a *consistent radius* (maxR)
+    // This ensures inner and outer vertices get the SAME noise value.
+    const noise_x = _radial.x * maxR * h_freq;
     const noise_y = _v.y * v_freq;
-    const noise_z = _v.z * h_freq;
+    const noise_z = _radial.z * maxR * h_freq;
     
-    // 2. Get a smooth, continuous noise value (-1.0 to 1.0)
     const noise_val = _noiseGen.noise3D(noise_x, noise_y, noise_z);
 
-    // 3. Apply sharpness to turn smooth hills into sharper creases
-    // pow(1) = smooth, pow(3) = sharp
+    // 3. Calculate displacement (same as before)
     let displacement = Math.sign(noise_val) * Math.pow(Math.abs(noise_val), sharp);
 
-    // 4. Calculate fade
+    // 4. Calculate fade (same as before)
     let profile = 1.0;
     if (fadeMM > 0) {
       const u = (_v.y - bottomY) / Math.max(1e-6, fadeMM);
       profile = smooth01(u);
     }
 
-    // 5. Final push amount, can be positive (out) or negative (in)
     let push = displacement * depth * profile;
 
-    if (push > 0) {
-      // If pushing *out*, respect the max diameter
-      const slack = Math.max(0, maxR - r);
-      push = Math.min(push, slack);
-    }
-    // Negative push (inward) is always allowed
-
+    // 5. REMOVED: The "slack" check.
+    // We push the inner and outer wall regardless of the max diameter
+    // to ensure they move together. The 'headroom' export
+    // tells the main app how much space the texture needs.
+    
+    // 6. Apply the push along the radial vector.
+    // Since 'push' is identical for inner/outer vertices and
+    // '_radial' is identical, the thickness is preserved.
     if (Math.abs(push) > 1e-4) {
       _v.addScaledVector(_radial, push);
       pos.setXYZ(i, _v.x, _v.y, _v.z);
@@ -196,13 +192,13 @@ function apply(geometry, p) {
   }
 
   pos.needsUpdate = true;
-  geometry.computeVertexNormals(); // Re-calc normals from the new shape
+  geometry.computeVertexNormals();
   return geometry;
 }
 
 export default {
-  id: "broadFolds",
-  label: "Broad Folds",
+  id: "constantFolds",
+  label: "Constant Folds",
   defaults: {
     t_fold_h_size: 80,
     t_fold_v_size: 60,
@@ -217,7 +213,6 @@ export default {
     { key: "t_fold_sharpness",     label: "Crease sharpness",     type: "range", min: 1.0, max: 5.0, step: 0.1 },
     { key: "t_fold_fade_bottom_mm",label: "Fade bottom, mm",      type: "range", min: 5,  max: 40,  step: 1 },
   ],
-  // Headroom only needs to account for the *outward* push
   headroom: (p) => clamp(p.t_fold_depth ?? 4.0, 0, 10.0),
   apply,
 };
