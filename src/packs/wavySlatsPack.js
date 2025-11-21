@@ -1,4 +1,4 @@
-// src/packs/pleatedUmbrellaPack.js
+// src/packs/wavySlatsPack.js
 // Pleated umbrella shade. Fixed 80 mm hole, 3 mm bottom slab.
 // World units mm. Origin at 0,0,0. Base sits on y = 0.
 
@@ -7,7 +7,7 @@ import { textures, textureOptions } from "../textures";
 
 const MAX_SIZE = 240;
 const MIN_THICK = 0.8;
-const MAX_THICK = 1.1; // allow a touch thicker if needed
+const MAX_THICK = 1.1; 
 const BOTTOM_THICK = 3;
 const FIXED_HOLE_DIAMETER = 80;
 
@@ -21,14 +21,20 @@ const EXPORT_CAPS  = { maxRadial: 1400, maxRes: 1600, stepMM: 0.35 };
 function recommendedRadialSegments(p, caps) {
   const pleats = clamp(Math.floor(p.pleatCount ?? 24), 6, 96);
   const sharp = clamp(p.pleatSharpness ?? 3, 1, 8);
-  // more pleats and sharper folds need more rings
-  const want = Math.max(180, pleats * (8 + sharp * 2));
+  // Twist adds complexity, so we ensure enough segments
+  const twist = Math.abs(p.twistTurns ?? 0);
+  const twistFactor = 1 + twist * 0.5; 
+  
+  const want = Math.max(180, pleats * (8 + sharp * 2) * twistFactor);
   return clamp(Math.round(want), 96, caps.maxRadial);
 }
 
 function recommendedResolution(p, caps) {
   const base = Math.ceil((p.height ?? 220) / caps.stepMM);
-  return clamp(base, 180, caps.maxRes);
+  // Twist requires higher vertical resolution to look smooth
+  const twist = Math.abs(p.twistTurns ?? 0);
+  const twistMult = 1 + twist * 0.5;
+  return clamp(Math.round(base * twistMult), 180, caps.maxRes);
 }
 
 /* ---------- Base circular profile with fixed 80 mm hole ---------- */
@@ -86,12 +92,20 @@ function tri01(u) {
 function pleatOffsetAt(theta, t, p) {
   const k = clamp(p.pleatSharpness ?? 3, 1, 8);
   const pleats = clamp(Math.floor(p.pleatCount ?? 24), 6, 96);
+  
+  // --- NEW FEATURE: Spiral Twist ---
+  const twistAngle = t * (p.twistTurns ?? 0) * Math.PI * 2;
+  
   const phase = (clamp(p.pleatPhaseDeg ?? 0, 0, 360) * Math.PI) / 180;
+  
   const baseAmp = clamp(p.pleatDepthMM ?? 3, 0, 8);
   const topScale = clamp(p.pleatDepthTopScale ?? 0.4, 0, 1);
   const amp = baseAmp * (1 - t + t * topScale); // fades toward top
-  const tri = tri01((theta + phase) * pleats / (2 * Math.PI));
+  
+  // Add twistAngle to theta
+  const tri = tri01((theta + phase + twistAngle) * pleats / (2 * Math.PI));
   const shaped = Math.pow(tri, k);
+  
   return amp * shaped;
 }
 
@@ -147,6 +161,9 @@ function constrainParams(pIn = {}, caps = PREVIEW_CAPS) {
   out.pleatDepthTopScale= clamp(pIn.pleatDepthTopScale ?? 0.4, 0, 1);
   out.pleatSharpness    = clamp(pIn.pleatSharpness ?? 3, 1, 8);
   out.pleatPhaseDeg     = clamp(pIn.pleatPhaseDeg ?? 0, 0, 360);
+  
+  // Twist
+  out.twistTurns        = clamp(pIn.twistTurns ?? 0, -1, 1);
 
   // texture selection and headroom
   out.texture = pIn.texture ?? (textureOptions[0]?.value ?? "none");
@@ -218,28 +235,36 @@ function buildPleatedUmbrella(params, caps = PREVIEW_CAPS) {
 
 function schemaFor(params) {
   const base = [
-    { key: "height",        label: "Height",           type: "range", min: 100, max: MAX_SIZE, step: 1 },
-    { key: "wall",          label: "Wall thickness",   type: "range", min: MIN_THICK, max: MAX_THICK, step: 0.1 },
+    // --- SHAPE GROUP ---
+    { key: "height",        label: "Height",           type: "range", min: 100, max: MAX_SIZE, step: 1, group: "Shape" },
+    { key: "baseRadius",    label: "Bottom Size",      type: "range", min: 45, max: MAX_SIZE / 2, step: 0.5, group: "Shape" },
+    { key: "topRadius",     label: "Top Size",         type: "range", min: 10, max: MAX_SIZE / 2, step: 0.5, group: "Shape" },
+    { key: "pleatCount",    label: "Pleat Count",      type: "range", min: 6,  max: 96, step: 1, group: "Shape" },
+    { key: "twistTurns",    label: "Spiral Twist",     type: "range", min: -1, max: 1, step: 0.01, group: "Shape" }, // New!
+    { key: "pleatDepthMM",  label: "Pleat Depth",      type: "range", min: 0,  max: 4,  step: 0.1, group: "Shape" },
 
-    { key: "baseRadius",    label: "Base radius",      type: "range", min: 45, max: MAX_SIZE / 2, step: 0.5 },
-    { key: "topRadius",     label: "Top radius",       type: "range", min: 10, max: MAX_SIZE / 2, step: 0.5 },
-
-    { key: "pleatCount",        label: "Pleat count",          type: "range", min: 6,  max: 96, step: 1 },
-    { key: "pleatDepthMM",      label: "Pleat depth, mm",      type: "range", min: 0,  max: 4,  step: 0.1 },
-    { key: "pleatDepthTopScale",label: "Depth at top, scale",  type: "range", min: 0,  max: 1,  step: 0.01 },
-    { key: "pleatSharpness",    label: "Pleat sharpness",      type: "range", min: 1,  max: 8,  step: 0.1 },
-
-    { key: "texture",       label: "Texture",          type: "select", options: textureOptions },
-    { key: "autoSpin",      label: "Auto spin",        type: "checkbox" },
+    // --- ADVANCED SHAPE ---
+    { key: "pleatDepthTopScale",label: "Top Depth Scale",  type: "range", min: 0,  max: 1,  step: 0.01, group: "Shape", advanced: true },
+    { key: "pleatSharpness",    label: "Pleat Sharpness",  type: "range", min: 1,  max: 8,  step: 0.1, group: "Shape", advanced: true },
+    { key: "wall",              label: "Wall Thickness",   type: "range", min: MIN_THICK, max: MAX_THICK, step: 0.1, group: "Shape", advanced: true },
+    { key: "pleatPhaseDeg",     label: "Start Angle",      type: "range", min: 0,  max: 360, step: 1, group: "Shape", advanced: true },
+    { key: "autoSpin",          label: "Auto Spin",        type: "checkbox", group: "Shape", advanced: true },
   ];
 
   const texId = params?.texture ?? (textureOptions[0]?.value ?? "none");
   const texDesc = textures[texId];
-  const tex = texDesc?.schema ?? [];
+  const rawTex = texDesc?.schema ?? [];
+
+  // Map texture fields to "Texture" group
+  const texFields = rawTex.map(f => ({ ...f, group: "Texture" }));
+  
+  // Texture Selector
+  const texSelector = { key: "texture", label: "Style", type: "select", options: textureOptions, group: "Texture" };
 
   return [
     ...base,
-    ...tex,
+    texSelector,
+    ...texFields,
   ];
 }
 
@@ -257,6 +282,7 @@ function defaultsFactory() {
     pleatDepthTopScale: 0.4,
     pleatSharpness: 3,
     pleatPhaseDeg: 0,
+    twistTurns: 0, // New default
 
     texture: firstTex,
     autoSpin: true,
