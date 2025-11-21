@@ -1,6 +1,7 @@
 // src/packs/rippleSpiralPack.js
-// Gyroid mapped shade (Gyroid Glow). Organic cell windows.
-// Fixed 80 mm hole. Print safe (overhang constrained).
+// (Actually implements the Gyroid Glow model)
+// Gyroid mapped shade, organic cell windows from a gyroid style field.
+// Fixed 80 mm hole, 3 mm bottom slab.
 
 import * as THREE from "three";
 import { textures, textureOptions } from "../textures";
@@ -11,48 +12,48 @@ const MAX_THICK = 1;
 const BOTTOM_THICK = 3;
 const FIXED_HOLE_DIAMETER = 80;
 
-function clamp(v,a,b){ return Math.min(b, Math.max(a,v)); }
+function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
 
 const PREVIEW_CAPS = { maxRadial: 960, maxRes: 1000, stepMM: 0.6 };
 const EXPORT_CAPS  = { maxRadial: 1400, maxRes: 1600, stepMM: 0.35 };
 
 /* detail */
-function recommendedRadialSegments(p,caps){
+function recommendedRadialSegments(p, caps) {
   const k = clamp(p.gyroidFreq ?? 0.9, 0.2, 3);
   const want = Math.max(240, Math.round(900 * k));
   return clamp(want, 96, caps.maxRadial);
 }
-function recommendedResolution(p,caps){
+function recommendedResolution(p, caps) {
   const base = Math.ceil((p.height ?? 220) / caps.stepMM);
   return clamp(base, 180, caps.maxRes);
 }
 
 /* base profile */
-function rOuterAt(t,p){
+function rOuterAt(t, p) {
   const r = p.baseRadius + (p.topRadius - p.baseRadius) * t;
   const maxR = MAX_SIZE * 0.5;
   const head = p.texture_headroom ?? 0;
   return Math.min(r, Math.max(0.5, maxR - head));
 }
-function rInnerAt(t,p){ return Math.max(rOuterAt(t,p) - p._wallForLathe, 0.5); }
+function rInnerAt(t, p) { return Math.max(rOuterAt(t, p) - p._wallForLathe, 0.5); }
 
-function makeProfileWithHole(p){
+function makeProfileWithHole(p) {
   const H = p.height;
   const N = p.resolution;
   const rHole = FIXED_HOLE_DIAMETER * 0.5;
   const pts = [];
   pts.push(new THREE.Vector2(rHole, 0));
   pts.push(new THREE.Vector2(rOuterAt(0, p), 0));
-  for(let i=1;i<=N;i++){
-    const t = i/N;
-    pts.push(new THREE.Vector2(rOuterAt(t,p), t*H));
+  for (let i = 1; i <= N; i++) {
+    const t = i / N;
+    pts.push(new THREE.Vector2(rOuterAt(t, p), t * H));
   }
-  const rTopIn = Math.max(rInnerAt(1,p), 0.5);
+  const rTopIn = Math.max(rInnerAt(1, p), 0.5);
   pts.push(new THREE.Vector2(rTopIn, H));
-  for(let i=N-1;i>=0;i--){
-    const t = i/N, y = t*H;
+  for (let i = N - 1; i >= 0; i--) {
+    const t = i / N, y = t * H;
     if (y < BOTTOM_THICK) break;
-    pts.push(new THREE.Vector2(rInnerAt(t,p), y));
+    pts.push(new THREE.Vector2(rInnerAt(t, p), y));
   }
   const rInSlab = Math.max(rInnerAt(BOTTOM_THICK / H, p), 0.5);
   pts.push(new THREE.Vector2(Math.min(rInSlab, rHole), BOTTOM_THICK));
@@ -62,21 +63,21 @@ function makeProfileWithHole(p){
 }
 
 /* gyroid field mapped inward offset */
-function gField(x,y,z,a){
-  return Math.sin(a*x)*Math.cos(a*y) + Math.sin(a*y)*Math.cos(a*z) + Math.sin(a*z)*Math.cos(a*x);
+function gField(x, y, z, a) {
+  return Math.sin(a * x) * Math.cos(a * y) + Math.sin(a * y) * Math.cos(a * z) + Math.sin(a * z) * Math.cos(a * x);
 }
 
-function inwardOffsetRaw(theta, t, p, r){
+function inwardOffsetRaw(theta, t, p, r) {
   const a = clamp(p.gyroidFreq ?? 0.9, 0.2, 3);
-  const spin = (p.gyroidPhaseDeg ?? 0) * Math.PI / 180; 
+  const spin = (p.gyroidPhaseDeg ?? 0) * Math.PI / 180;
 
   // local 3D point in mm space
   const H = p.height;
   const x = Math.cos(theta + spin) * r / 30;
   const z = Math.sin(theta + spin) * r / 30;
-  const y = t * (H/30);
+  const y = t * (H / 30);
 
-  const f = gField(x,y,z, a);
+  const f = gField(x, y, z, a);
 
   // window logic
   const th = clamp(p.gyroidThreshold ?? 0.15, 0.0, 0.9);
@@ -87,27 +88,26 @@ function inwardOffsetRaw(theta, t, p, r){
 
   const baseAmp = clamp(p.inwardDepthMM ?? 3.0, 0, 10);
   const topScale = clamp(p.depthTopScale ?? 0.4, 0, 1);
-  const amp = baseAmp * (1 - t + t*topScale);
+  const amp = baseAmp * (1 - t + t * topScale);
 
   return amp * shaped; // millimeters, inward
 }
 
-function scaleFromOffset(r,d){
-  // final radius r' equals r - d
+function scaleFromOffset(r, d) {
   const s = 1 - d / Math.max(r, 1e-6);
   return clamp(s, 0.2, 1);
 }
 
 /* estimate min scale for safe wall inflation */
-function estimateMinScale(p){
+function estimateMinScale(p) {
   let minS = 1;
   const stepsT = 18;
   const stepsA = 360;
-  for(let i=0;i<=stepsT;i++){
-    const t = i/stepsT;
-    const r = rOuterAt(t,p);
-    for(let j=0;j<stepsA;j++){
-      const th = j/stepsA * Math.PI*2;
+  for (let i = 0; i <= stepsT; i++) {
+    const t = i / stepsT;
+    const r = rOuterAt(t, p);
+    for (let j = 0; j < stepsA; j++) {
+      const th = j / stepsA * Math.PI * 2;
       const d = inwardOffsetRaw(th, t, p, r);
       const s = scaleFromOffset(r, d);
       if (s < minS) minS = s;
@@ -117,21 +117,22 @@ function estimateMinScale(p){
 }
 
 /* constraints and build */
-function clampTopFor45(p){
+function clampTopFor45(p) {
   if (p.topRadius <= p.baseRadius) return;
-  const maxAllowed = p.baseRadius + p.height * 1.0; // 45 degrees from vertical
+  // Enforce 45 degree max slope (radius cannot grow faster than height)
+  const maxAllowed = p.baseRadius + p.height * 1.0;
   if (p.topRadius > maxAllowed) p.topRadius = maxAllowed;
 }
 
-function constrainParams(pIn={}, caps=PREVIEW_CAPS){
+function constrainParams(pIn = {}, caps = PREVIEW_CAPS) {
   const out = { ...pIn };
 
   out.height = clamp(pIn.height ?? 220, 100, MAX_SIZE);
   out.wall   = clamp(pIn.wall ?? 1.2, MIN_THICK, MAX_THICK);
 
-  const baseMin = Math.max(45, out.wall + 2, FIXED_HOLE_DIAMETER*0.5 + 5);
-  out.baseRadius = clamp(pIn.baseRadius ?? 116, baseMin, MAX_SIZE/2);
-  out.topRadius  = clamp(pIn.topRadius  ?? 92,  out.wall + 2, MAX_SIZE/2);
+  const baseMin = Math.max(45, out.wall + 2, FIXED_HOLE_DIAMETER * 0.5 + 5);
+  out.baseRadius = clamp(pIn.baseRadius ?? 116, baseMin, MAX_SIZE / 2);
+  out.topRadius  = clamp(pIn.topRadius  ?? 92,  out.wall + 2, MAX_SIZE / 2);
 
   out.gyroidFreq      = clamp(pIn.gyroidFreq ?? 0.9, 0.2, 3);
   out.gyroidPhaseDeg  = clamp(pIn.gyroidPhaseDeg ?? 0, 0, 360);
@@ -144,9 +145,7 @@ function constrainParams(pIn={}, caps=PREVIEW_CAPS){
   const tex = textures[out.texture];
   out.texture_headroom = tex?.headroom ? tex.headroom(out) : 0;
 
-  out.enforce45 = pIn.enforce45 ?? true;
-  delete out.gyroidTwistTurns;
-
+  // Always enforce 45 degrees
   clampTopFor45(out);
 
   const minS = estimateMinScale(out);
@@ -158,12 +157,15 @@ function constrainParams(pIn={}, caps=PREVIEW_CAPS){
 
   out.bottom_thickness = BOTTOM_THICK;
   out._holeRadius = FIXED_HOLE_DIAMETER * 0.5;
-  out.autoSpin = pIn.autoSpin ?? true;
+  
+  // Hardcode to false/true as preferred, but removed from UI
+  out.autoSpin = false; 
+  
   return out;
 }
 
-/* build with two pass slope guard */
-function buildGyroidGlow(params, caps=PREVIEW_CAPS){
+/* build with two pass slope guard (45 degrees enforced) */
+function buildGyroidGlow(params, caps = PREVIEW_CAPS) {
   const p = constrainParams(params, caps);
 
   const profile = makeProfileWithHole(p);
@@ -171,62 +173,61 @@ function buildGyroidGlow(params, caps=PREVIEW_CAPS){
   geom.computeVertexNormals();
 
   const H = p.height;
-  const N = p.resolution;                  
-  const A = p.radialSegments;              
+  const N = p.resolution;
+  const A = p.radialSegments;
   const dy = H / N;
 
-  // Precompute base radii along height
   const rBase = new Array(N + 1);
-  for(let i=0;i<=N;i++){
+  for (let i = 0; i <= N; i++) {
     const t = i / N;
     rBase[i] = rOuterAt(t, p);
   }
 
-  // Raw inward depths
-  const dRaw = Array.from({length: N + 1}, ()=>new Float32Array(A));
-  for(let i=0;i<=N;i++){
+  const dRaw = Array.from({ length: N + 1 }, () => new Float32Array(A));
+  for (let i = 0; i <= N; i++) {
     const t = i / N;
     const r = rBase[i];
-    for(let a=0;a<A;a++){
+    for (let a = 0; a < A; a++) {
       const theta = (a / A) * Math.PI * 2;
       dRaw[i][a] = inwardOffsetRaw(theta, t, p, r);
     }
   }
 
-  // Clamp outward growth to 45 degrees
-  const dClamped = Array.from({length: N + 1}, ()=>new Float32Array(A));
-  for(let a=0;a<A;a++){
+  // Pass 2: Clamp outward growth to 45 degrees
+  const dClamped = Array.from({ length: N + 1 }, () => new Float32Array(A));
+  for (let a = 0; a < A; a++) {
     const rEff0 = Math.max(0.5, rBase[0] - dRaw[0][a]);
     dClamped[0][a] = clamp(dRaw[0][a], 0, rBase[0] - 0.2);
     let lastEff = rEff0;
 
-    for(let i=1;i<=N;i++){
+    for (let i = 1; i <= N; i++) {
       const rOut = rBase[i];
       const desired = Math.max(0.5, rOut - dRaw[i][a]);
+      
+      // The Magic: Limit radius growth to 'dy' per step (1:1 slope = 45 degrees)
       const maxAllowed = lastEff + dy;
       const eff = Math.min(desired, maxAllowed);
+      
       const d = clamp(rOut - eff, 0, rOut - 0.2);
       dClamped[i][a] = d;
       lastEff = Math.max(0.5, rOut - d);
     }
   }
 
-  // Apply depths
   const pos = geom.attributes.position;
   const v = new THREE.Vector3();
 
-  function indexForVertex(x, y, z){
-    const t = THREE.MathUtils.clamp(H>0 ? y / H : 0, 0, 1);
+  function indexForVertex(x, y, z) {
+    const t = THREE.MathUtils.clamp(H > 0 ? y / H : 0, 0, 1);
     const iT = Math.round(t * N);
     let theta = Math.atan2(z, x);
-    if (theta < 0) theta += Math.PI*2;
+    if (theta < 0) theta += Math.PI * 2;
     const iA = Math.round(theta / (Math.PI * 2) * A) % A;
     return { iT, iA };
   }
 
-  for(let i=0;i<pos.count;i++){
+  for (let i = 0; i < pos.count; i++) {
     v.fromBufferAttribute(pos, i);
-
     if (v.y <= BOTTOM_THICK + 1e-6) {
       const r0 = Math.hypot(v.x, v.z);
       if (r0 <= p._holeRadius + 0.25) continue;
@@ -234,7 +235,6 @@ function buildGyroidGlow(params, caps=PREVIEW_CAPS){
 
     const { iT, iA } = indexForVertex(v.x, v.y, v.z);
     const r = Math.hypot(v.x, v.z);
-
     const d = dClamped[iT][iA];
     const s = scaleFromOffset(r, d);
     v.x *= s; v.z *= s;
@@ -250,37 +250,32 @@ function buildGyroidGlow(params, caps=PREVIEW_CAPS){
 }
 
 /* schema */
-function schemaFor(params){
+function schemaFor(params) {
   const base = [
-    // --- SHAPE ---
-    { key:"height", label:"Height", type:"range", min:100, max:MAX_SIZE, step:1, group:"Shape" },
-    { key:"baseRadius", label:"Bottom Size", type:"range", min:45, max:MAX_SIZE/2, step:0.5, group:"Shape" },
-    { key:"topRadius", label:"Top Size", type:"range", min:10, max:MAX_SIZE/2, step:0.5, group:"Shape" },
+    // --- SHAPE GROUP ---
+    { key: "height",        label: "Height",          type: "range", min: 100, max: MAX_SIZE, step: 1, group: "Shape" },
+    { key: "baseRadius",    label: "Bottom Size",     type: "range", min: 45, max: MAX_SIZE / 2, step: 0.5, group: "Shape" },
+    { key: "topRadius",     label: "Top Size",        type: "range", min: 10, max: MAX_SIZE / 2, step: 0.5, group: "Shape" },
+    { key: "wall",          label: "Wall Thickness",  type: "range", min: MIN_THICK, max: MAX_THICK, step: 0.1, group: "Shape", advanced: true },
 
-    // --- ORGANIC CELLS ---
-    { key:"gyroidFreq", label:"Cell Density", type:"range", min:0.2, max:3, step:0.01, group:"Organic Cells" },
-    { key:"gyroidThreshold", label:"Window Openness", type:"range", min:0, max:0.9, step:0.01, group:"Organic Cells" },
-    { key:"inwardDepthMM", label:"Emboss Depth", type:"range", min:0, max:4.0, step:0.1, group:"Organic Cells" },
-
-    // Advanced Organic
-    { key:"gyroidPhaseDeg", label:"Pattern Shift", type:"range", min:0, max:360, step:1, group:"Organic Cells", advanced: true },
-    { key:"gyroidSharp", label:"Edge Sharpness", type:"range", min:1, max:12, step:0.1, group:"Organic Cells", advanced: true },
-    { key:"depthTopScale", label:"Fade Top", type:"range", min:0, max:1, step:0.01, group:"Organic Cells", advanced: true },
+    // --- PATTERN GROUP ---
+    { key: "gyroidFreq",      label: "Pattern Density", type: "range", min: 0.2, max: 3, step: 0.01, group: "Pattern" },
+    { key: "gyroidThreshold", label: "Window Openness", type: "range", min: 0, max: 0.9, step: 0.01, group: "Pattern" },
+    { key: "inwardDepthMM",   label: "Indent Depth",    type: "range", min: 0, max: 2, step: 0.1, group: "Pattern" },
     
-    // Advanced Global
-    { key:"wall", label:"Wall Thickness", type:"range", min:MIN_THICK, max:MAX_THICK, step:0.1, group:"Shape", advanced: true },
-    { key:"autoSpin", label:"Auto Spin", type:"checkbox", group:"Shape", advanced: true },
-    { key:"enforce45", label:"Force 45° Slope", type:"checkbox", group:"Shape", advanced: true },
+    // Advanced Pattern
+    { key: "gyroidPhaseDeg",  label: "Pattern Shift",   type: "range", min: 0, max: 360, step: 1, group: "Pattern", advanced: true },
+    { key: "gyroidSharp",     label: "Edge Sharpness",  type: "range", min: 1, max: 12, step: 0.1, group: "Pattern", advanced: true },
+    { key: "depthTopScale",   label: "Fade at Top",     type: "range", min: 0, max: 1, step: 0.01, group: "Pattern", advanced: true },
   ];
 
   const texId = params?.texture ?? (textureOptions[0]?.value ?? "none");
   const texDesc = textures[texId];
   const rawTex = texDesc?.schema ?? [];
+  const texFields = rawTex
+    .filter(e => e.key !== "gyroidTwistTurns") // Clean up legacy fields
+    .map(f => ({ ...f, group: "Texture" }));
 
-  // Map texture fields to the "Texture" group
-  const texFields = rawTex.map(f => ({ ...f, group: "Texture" }));
-  
-  // Texture Selector
   const texSelector = { key: "texture", label: "Style", type: "select", options: textureOptions, group: "Texture" };
 
   return [
@@ -290,20 +285,16 @@ function schemaFor(params){
   ];
 }
 
-function defaultsFactory(){
+function defaultsFactory() {
   const firstTex = textureOptions[0]?.value ?? "none";
   const d = {
-    height:220, wall:1.2,
-    baseRadius:116, topRadius:92,
-
-    gyroidFreq:0.9, 
-    gyroidPhaseDeg:0,
-    gyroidThreshold:0.15, 
-    gyroidSharp:3,
-    inwardDepthMM:3.0, 
-    depthTopScale:0.4,
-
-    texture:firstTex, autoSpin:true, enforce45:true,
+    height: 220, wall: 1.2,
+    baseRadius: 116, topRadius: 92,
+    gyroidFreq: 0.9, gyroidPhaseDeg: 0,
+    gyroidThreshold: 0.15, gyroidSharp: 3,
+    inwardDepthMM: 3.0, depthTopScale: 0.4,
+    texture: firstTex, 
+    // autoSpin & enforce45 removed
   };
   const tex = textures[firstTex];
   return tex?.defaults ? { ...d, ...tex.defaults } : d;
@@ -312,22 +303,25 @@ function defaultsFactory(){
 export const models = {
   gyroidGlow: {
     label: "Gyroid Glow",
-    schema: (p)=>schemaFor(p),
-    defaults: ()=>defaultsFactory(),
-    build: (p)=>buildGyroidGlow(p, PREVIEW_CAPS),
+    schema: (p) => schemaFor(p),
+    defaults: () => defaultsFactory(),
+    build: (p) => buildGyroidGlow(p, PREVIEW_CAPS),
   },
 };
 
-function exportSTL(params){
-  import("three-stdlib").then(({ STLExporter })=>{
+function exportSTL(params) {
+  import("three-stdlib").then(({ STLExporter }) => {
     const geom = buildGyroidGlow(params, EXPORT_CAPS);
     const exporter = new STLExporter();
-    const data = exporter.parse(geom, { binary:true });
-    const blob = new Blob([data], { type:"application/sla" });
+    const data = exporter.parse(geom, { binary: true });
+    const blob = new Blob([data], { type: "application/sla" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = "lampshade_gyroid_glow.stl";
-    document.body.appendChild(a); a.click(); a.remove();
+    a.href = url;
+    a.download = "lampshade_gyroid_glow.stl";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
     URL.revokeObjectURL(url);
   });
 }
