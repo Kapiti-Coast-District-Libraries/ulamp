@@ -19,10 +19,12 @@ function apply(geometry, p) {
   const ribs   = Math.max(2, Math.floor(p.t_ribs_count ?? 24));
   const sharp  = Math.max(1, Math.floor(p.t_ribs_sharpness ?? 4));
   const depth  = clamp(p.t_ribs_depth ?? 3.0, 0, 3.0);
-  const fadeMM = clamp(p.t_ribs_fade_bottom_mm ?? 5, 5, 40); // 0 means no fade
+  const fadeMM = clamp(p.t_ribs_fade_bottom_mm ?? 5, 5, 40); 
+  const twist  = p.t_ribs_twist ?? 0;
 
   const bottomY = (p.bottom_thickness ?? 3) + 0.1;
   const maxRadius = MAX_DIAMETER_MM / 2;
+  const height = p.height ?? 220; // Need height for twist calculation
 
   const v = new THREE.Vector3();
   const n = new THREE.Vector3();
@@ -43,6 +45,14 @@ function apply(geometry, p) {
     if (n.dot(radial) <= 0.0) continue;
 
     let theta = Math.atan2(v.z, v.x);
+    
+    // --- NEW FEATURE: Twist ---
+    // Add rotation based on height
+    if (Math.abs(twist) > 0.001) {
+      const t = v.y / height;
+      theta += t * twist * Math.PI * 2;
+    }
+
     if (theta < 0) theta += Math.PI * 2;
 
     const ridge = Math.max(0, Math.cos(theta * ribs));
@@ -72,18 +82,23 @@ function apply(geometry, p) {
 
 export default {
   id: "verticalRibs",
-  label: "Vertical ribs",
+  label: "Vertical Ribs",
   defaults: {
     t_ribs_count: 44,
     t_ribs_depth: 3.0,
+    t_ribs_twist: 0, // New default
     t_ribs_sharpness: 4,
-    t_ribs_fade_bottom_mm: 5, // 0 means no bottom fade
+    t_ribs_fade_bottom_mm: 5,
   },
   schema: [
-    { key: "t_ribs_count",         label: "Rib count",        type: "range", min: 2,  max: 120, step: 1 },
-    { key: "t_ribs_depth",         label: "Rib depth, mm",    type: "range", min: 0,  max: 3.0, step: 0.05 },
-    { key: "t_ribs_sharpness",     label: "Rib sharpness",    type: "range", min: 1,  max: 8,  step: 1 },
-    { key: "t_ribs_fade_bottom_mm",label: "Fade bottom, mm",  type: "range", min: 5,  max: 40, step: 1 },
+    // --- BASIC CONTROLS ---
+    { key: "t_ribs_count",         label: "Rib Density",      type: "range", min: 4,  max: 120, step: 1 },
+    { key: "t_ribs_depth",         label: "Rib Depth",        type: "range", min: 0,  max: 3.0, step: 0.05 },
+    { key: "t_ribs_twist",         label: "Spiral Twist",     type: "range", min: -2, max: 2,   step: 0.05 }, // New!
+
+    // --- ADVANCED CONTROLS ---
+    { key: "t_ribs_sharpness",     label: "Rib Sharpness",    type: "range", min: 1,  max: 8,  step: 1, advanced: true },
+    { key: "t_ribs_fade_bottom_mm",label: "Base Fade (mm)",   type: "range", min: 5,  max: 40, step: 1, advanced: true },
   ],
   headroom: (p) => clamp(p.t_ribs_depth ?? 3.0, 0, 3.0),
   apply,
