@@ -130,6 +130,9 @@ function constrainParamsRaw(pIn = {}, caps = PREVIEW_CAPS) {
   out.m_drips         = clamp(Math.floor(pIn.m_drips ?? 3), 1, 8);
   out.m_drip_sharp    = clamp(pIn.m_drip_sharp ?? 1.4, 0.5, 4);
   out.m_warp_twist    = clamp(pIn.m_warp_twist ?? 0.15, -1, 1);
+  
+  // New Feature: Puddle
+  out.m_puddle_frac   = clamp(pIn.m_puddle_frac ?? 0.0, 0, 1.0);
 
   // texture integration
   out.texture = pIn.texture ?? (textureOptions[0]?.value ?? "none");
@@ -267,39 +270,46 @@ function buildMeltSlump(params, caps = PREVIEW_CAPS) {
   return entry && typeof entry.apply === "function" ? entry.apply(geom, p) : geom;
 }
 
-/* ---------------- schema ---------------- */
+/* ---------------- schema (Grouped & Cleaned) ---------------- */
 function schemaFor(params) {
   const base = [
-    { key: "height",     label: "Height", type: "range", min: 80,  max: MAX_SIZE, step: 1 },
-    { key: "wall",       label: "Wall thickness", type: "range", min: MIN_THICK, max: MAX_THICK, step: 0.1 },
+    // --- SHAPE GROUP ---
+    { key: "height",     label: "Height",      type: "range", min: 80,  max: MAX_SIZE, step: 1, group: "Shape" },
+    { key: "baseRadius", label: "Bottom Size", type: "range", min: 45, max: MAX_SIZE / 2, step: 0.5, group: "Shape" },
+    { key: "topRadius",  label: "Top Size",    type: "range", min: 10, max: MAX_SIZE / 2, step: 0.5, group: "Shape" },
+    { key: "m_bulge_mm", label: "Belly Size",  type: "range", min: 0, max: 40, step: 0.5, group: "Shape" },
+    
+    // Advanced Shape
+    { key: "m_belly",    label: "Belly Height",type: "range", min: 0, max: 1, step: 0.01, group: "Shape", advanced: true },
+    { key: "m_waist",    label: "Waist Pinch", type: "range", min: 0, max: 0.9, step: 0.01, group: "Shape", advanced: true },
+    { key: "wall",       label: "Wall Thickness", type: "range", min: MIN_THICK, max: MAX_THICK, step: 0.1, group: "Shape", advanced: true },
 
-    { key: "baseRadius", label: "Base radius", type: "range", min: 45, max: MAX_SIZE / 2, step: 0.5 },
-    { key: "topRadius",  label: "Top radius",  type: "range", min: 10, max: MAX_SIZE / 2, step: 0.5 },
+    // --- MELT GROUP ---
+    { key: "m_slouch_mm",    label: "Slouch Amount", type: "range", min: 0, max: 40, step: 0.5, group: "Melt" },
+    { key: "m_top_droop_mm", label: "Drip Length",   type: "range", min: 0, max: 40, step: 0.5, group: "Melt" },
+    { key: "m_puddle_frac",  label: "Wax Puddle",    type: "range", min: 0, max: 1.0, step: 0.05, group: "Melt" }, // New Feature!
+    { key: "m_tilt_deg",     label: "Top Tilt",      type: "range", min: -20, max: 20, step: 0.1, group: "Melt" },
+    { key: "m_warp_twist",   label: "Melt Twist",    type: "range", min: -1, max: 1, step: 0.01, group: "Melt" },
 
-    { key: "m_bulge_mm", label: "Belly bulge, mm", type: "range", min: 0, max: 40, step: 0.5 },
-    { key: "m_belly",    label: "Belly position", type: "range", min: 0, max: 1, step: 0.01 },
-    { key: "m_waist",    label: "Waist pinch", type: "range", min: 0, max: 0.9, step: 0.01 },
-
-    { key: "m_slouch_mm",    label: "Slouch, mm", type: "range", min: 0, max: 40, step: 0.5 },
-    { key: "m_slouch_angle", label: "Slouch direction, rad", type: "range", min: -3.14, max: 3.14, step: 0.01 },
-    { key: "m_tilt_deg",     label: "Top tilt, deg", type: "range", min: -20, max: 20, step: 0.1 },
-
-    { key: "m_top_droop_mm", label: "Rim droop, mm", type: "range", min: 0, max: 40, step: 0.5 },
-    { key: "m_drips",        label: "Drip lobes", type: "range", min: 1, max: 8, step: 1 },
-    { key: "m_drip_sharp",   label: "Drip sharpness", type: "range", min: 0.5, max: 4, step: 0.1 },
-    { key: "m_warp_twist",   label: "Twist turns", type: "range", min: -1, max: 1, step: 0.01 },
-
-    { key: "texture", label: "Texture", type: "select", options: textureOptions },
+    // Advanced Melt
+    { key: "m_drips",        label: "Drip Count",    type: "range", min: 1, max: 8, step: 1, group: "Melt", advanced: true },
+    { key: "m_drip_sharp",   label: "Drip Sharpness",type: "range", min: 0.5, max: 4, step: 0.1, group: "Melt", advanced: true },
+    { key: "m_slouch_angle", label: "Slouch Direction", type: "range", min: -3.14, max: 3.14, step: 0.01, group: "Melt", advanced: true },
+    { key: "autoSpin",       label: "Auto Spin",     type: "checkbox", group: "Melt", advanced: true },
   ];
 
   const texId = params?.texture ?? (textureOptions[0]?.value ?? "none");
   const texDesc = textures?.[texId];
-  const tex = texDesc?.schema ?? [];
+  const rawTex = texDesc?.schema ?? [];
+
+  // Texture Group
+  const texSelector = { key: "texture", label: "Style", type: "select", options: textureOptions, group: "Texture" };
+  const texFields = rawTex.map(f => ({ ...f, group: "Texture" }));
 
   return [
     ...base,
-    ...tex,
-    { key: "autoSpin", label: "Auto spin", type: "checkbox" },
+    texSelector,
+    ...texFields
   ];
 }
 
@@ -325,7 +335,9 @@ function defaultsFactory() {
     m_drips: 3,
     m_drip_sharp: 1.4,
     m_warp_twist: 0.15,
-    m_puddle_frac: 0.0,
+    
+    // Enable a little puddle by default to show off the feature
+    m_puddle_frac: 0.2,
 
     texture: firstTex,
     autoSpin: true,
