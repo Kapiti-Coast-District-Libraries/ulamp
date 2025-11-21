@@ -1,118 +1,155 @@
-// src/textures/vortexLattice.js
+// src/textures/voronoiCells.js
 import * as THREE from "three";
 
 const MAX_DIAMETER_MM = 240;
-const MAX_OVERHANG_SLOPE = 1.0;
 
 function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
-function smooth01(u) { const x = clamp(u, 0, 1); return x * x * (3 - 2 * x); }
+function smoothstep(edge0, edge1, x) {
+  const t = clamp((x - edge0) / (edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
+}
+
+// --- FAST 3D WORLEY NOISE ---
+// A simplified implementation to run on the CPU. 
+// It finds the distance to the closest feature points in a 3D grid.
+
+const PERM = new Uint8Array(512);
+const GRAD = new Float32Array(512 * 3);
+// Seed the permutation table once
+let seed = 1234;
+function random() {
+  seed = (Math.imul(1664525, seed) + 1013904223) >>> 0;
+  return seed / 4294967296.0;
+}
+for (let i = 0; i < 256; i++) {
+  PERM[i] = i;
+  GRAD[i*3]   = random(); 
+  GRAD[i*3+1] = random();
+  GRAD[i*3+2] = random();
+}
+for (let i = 0; i < 255; i++) {
+  const r = i + ~~(random() * (256 - i));
+  [PERM[i], PERM[r]] = [PERM[r], PERM[i]];
+}
+for (let i = 256; i < 512; i++) {
+  PERM[i] = PERM[i & 255];
+  GRAD[i*3]   = GRAD[(i&255)*3];
+  GRAD[i*3+1] = GRAD[(i&255)*3+1];
+  GRAD[i*3+2] = GRAD[(i&255)*3+2];
+}
+
+// Hash function to get a deterministic random point in a grid cell
+function getFeaturePoint(ix, iy, iz, out) {
+  const index = PERM[(ix & 255) + PERM[(iy & 255) + PERM[iz & 255]]];
+  // Use the precomputed randoms to offset the point in the 0..1 box
+  out.x = ix + GRAD[index * 3];
+  out.y = iy + GRAD[index * 3 + 1];
+  out.z = iz + GRAD[index * 3 + 2];
+}
+
+const _feature = new THREE.Vector3();
+const _diff = new THREE.Vector3();
+
+function worley3D(x, y, z) {
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  const iz = Math.floor(z);
+
+  let d1 = 100.0; // Closest distance
+  let d2 = 100.0; // Second closest distance
+
+  // Check 3x3x3 neighbor grids
+  for (let xx = -1; xx <= 1; xx++) {
+    for (let yy = -1; yy <= 1; yy++) {
+      for (let zz = -1; zz <= 1; zz++) {
+        getFeaturePoint(ix + xx, iy + yy, iz + zz, _feature);
+        
+        _diff.set(x, y, z).sub(_feature);
+        const d2sq = _diff.lengthSq(); // Squared distance is faster to compare
+        
+        if (d2sq < d1) {
+          d2 = d1;
+          d1 = d2sq;
+        } else if (d2sq < d2) {
+          d2 = d2sq;
+        }
+      }
+    }
+  }
+  
+  // Return both squared distances
+  return { d1: Math.sqrt(d1), d2: Math.sqrt(d2) };
+}
+
 
 function apply(geometry, p) {
   const pos = geometry.attributes.position;
   const nor = geometry.attributes.normal;
   if (!pos || !nor) return geometry;
 
-  const bands     = Math.max(1, Math.floor(p.t_vortex_bands ?? 18));
-  const swirl     = clamp(p.t_vortex_swirl ?? 0.35, -2.0, 2.0); // turns across full height
-  const pitchMM   = clamp(p.t_vortex_pitch ?? 16, 4, 120);      // vertical wavelength
-  const depthMM   = clamp(p.t_vortex_depth ?? 2.8, 0, 3.5);
-  const sharp     = Math.max(1, Math.floor(p.t_vortex_sharpness ?? 3));
-  const fadeBotMM = clamp(p.t_vortex_fade_bottom_mm ?? 5, 5, 60);
+  // Params
+  const scale = clamp(p.t_voro_scale ?? 40, 10, 150);
+  const depth = clamp(p.t_voro_depth ?? 2.0, 0, 5.0);
+  const style = clamp(p.t_voro_style ?? 1.0, 0, 1); // 0 = Bubbles, 1 = Webbing
+  const wall  = clamp(p.t_voro_wall ?? 0.2, 0.01, 0.8); 
+  const twist = p.t_voro_twist ?? 0;
+  const stretch = p.t_voro_stretch ?? 1.0;
 
-  const H = p.height ?? 220;
-  const kY = (2 * Math.PI) / pitchMM;
-  const kT = bands;
-  const twistPhase = (theta, y) => theta + 2 * Math.PI * swirl * (y / Math.max(1e-6, H));
-
-  const N = pos.count;
-  const maxR = MAX_DIAMETER_MM / 2;
+  const freq = 1.0 / scale;
   const bottomY = (p.bottom_thickness ?? 3) + 0.1;
+  const maxRadius = MAX_DIAMETER_MM / 2;
+  const height = p.height ?? 220;
 
-  const v = new THREE.Vector3(), n = new THREE.Vector3(), radial = new THREE.Vector3();
+  const v = new THREE.Vector3();
+  const radial = new THREE.Vector3();
 
-  const thetaArr = new Float32Array(N);
-  const yArr     = new Float32Array(N);
-  const rArr     = new Float32Array(N);
-  const rawPush  = new Float32Array(N);
-  const canPush  = new Uint8Array(N);
-
-  for (let i = 0; i < N; i++) {
+  for (let i = 0; i < pos.count; i++) {
     v.fromBufferAttribute(pos, i);
-    n.fromBufferAttribute(nor, i);
-    yArr[i] = v.y;
-    if (v.y <= bottomY) { canPush[i] = 0; continue; }
+    
+    // Skip bottom slab
+    if (v.y <= bottomY) continue;
 
-    radial.set(v.x, 0, v.z);
-    const r = radial.length();
-    rArr[i] = r;
-    if (r < 1e-6) { canPush[i] = 0; continue; }
-    radial.multiplyScalar(1 / r);
-
-    if (n.dot(radial) <= 0) { canPush[i] = 0; continue; }
-
-    let theta = Math.atan2(v.z, v.x);
-    if (theta < 0) theta += Math.PI * 2;
-    thetaArr[i] = theta;
-
-    const th = twistPhase(theta, v.y);
-    // lattice from product of two angled waves
-    const a = Math.cos(kT * th + kY * v.y);
-    const b = Math.cos(kT * th - kY * v.y);
-    const ridge = 0.5 * (Math.abs(a) + Math.abs(b));
-    let prof = Math.pow(Math.max(0, ridge), sharp);
-
-    if (fadeBotMM > 0) {
-      const u = (v.y - bottomY) / Math.max(1e-6, fadeBotMM);
-      prof *= smooth01(u);
-    }
-
-    const slack = Math.max(0, maxR - r);
-    rawPush[i] = Math.min(depthMM, slack) * prof;
-    canPush[i] = rawPush[i] > 0 ? 1 : 0;
-  }
-
-  // Slope budget per angular ray
-  const BINS = 720, TWO_PI = Math.PI * 2;
-  const bins = Array.from({ length: BINS }, () => []);
-  for (let i = 0; i < N; i++) {
-    if (!canPush[i]) continue;
-    const bin = Math.min(BINS - 1, Math.floor((thetaArr[i] / TWO_PI) * BINS));
-    bins[bin].push(i);
-  }
-
-  const finalPush = new Float32Array(N);
-  for (let b = 0; b < BINS; b++) {
-    const idx = bins[b];
-    if (idx.length === 0) continue;
-    idx.sort((i, j) => yArr[i] - yArr[j]);
-    let prev = idx[0];
-    finalPush[prev] = Math.min(rawPush[prev], maxR - rArr[prev]);
-    for (let k = 1; k < idx.length; k++) {
-      const i = idx[k];
-      const dy = yArr[i] - yArr[prev];
-      const dr = rArr[i] - rArr[prev];
-      const baseSlope = Math.max(0, dr / Math.max(1e-6, dy));
-      const budget = Math.max(0, MAX_OVERHANG_SLOPE - baseSlope);
-      const maxInc = budget * dy;
-      const target = Math.min(rawPush[i], maxR - rArr[i]);
-      finalPush[i] = Math.min(target, finalPush[prev] + maxInc);
-      prev = i;
-    }
-  }
-
-  for (let i = 0; i < N; i++) {
-    const push = finalPush[i];
-    if (!push) continue;
-    v.fromBufferAttribute(pos, i);
     radial.set(v.x, 0, v.z);
     const r = radial.length();
     if (r < 1e-6) continue;
     radial.multiplyScalar(1 / r);
-    const slack = Math.max(0, maxR - r);
-    const pClamped = Math.min(push, slack);
-    if (pClamped <= 0) continue;
-    v.addScaledVector(radial, pClamped);
-    pos.setXYZ(i, v.x, v.y, v.z);
+
+    // Twist calculation
+    let theta = Math.atan2(v.z, v.x);
+    if (Math.abs(twist) > 0.001) {
+      const t = v.y / height;
+      theta += t * twist * Math.PI * 2;
+    }
+    
+    // Convert polar coord back to "Twisted Space" for noise lookup
+    // We use the perimeter distance (theta * r) for X to minimize distortion
+    const nx = theta * r * freq;
+    const ny = v.y * freq * stretch;
+    const nz = r * freq; // Depth layer
+    
+    // Calculate Worley Noise
+    const w = worley3D(nx, ny, nz);
+    
+    // Mix between "Bubbles" (d1) and "Cells" (d2 - d1)
+    // d1 = distance to center (creates bumps)
+    // d2 - d1 = distance to edge (creates ridges)
+    const bubbleShape = 1.0 - w.d1; 
+    const cellShape   = w.d2 - w.d1;
+    
+    let rawSignal = (1 - style) * bubbleShape + style * cellShape;
+    
+    // Apply wall thickness / sharpness
+    // We normalize the signal so the "peak" is controlled
+    let profile = smoothstep(0, wall, rawSignal);
+    
+    // Apply depth
+    const slack = Math.max(0, maxRadius - r);
+    const push = Math.min(depth, slack) * profile;
+
+    if (Math.abs(push) > 0.001) {
+      v.addScaledVector(radial, push);
+      pos.setXYZ(i, v.x, v.y, v.z);
+    }
   }
 
   pos.needsUpdate = true;
@@ -121,24 +158,27 @@ function apply(geometry, p) {
 }
 
 export default {
-  id: "vortexLattice",
-  label: "Vortex lattice",
+  id: "voronoiCells",
+  label: "Voronoi Cells",
   defaults: {
-    t_vortex_bands: 18,
-    t_vortex_swirl: 0.35,
-    t_vortex_pitch: 16,
-    t_vortex_depth: 2.8,
-    t_vortex_sharpness: 3,
-    t_vortex_fade_bottom_mm: 5,
+    t_voro_scale: 35,
+    t_voro_depth: 2.5,
+    t_voro_style: 1.0, // Default to 'Web' look
+    t_voro_wall: 0.25,
+    t_voro_twist: 0,
+    t_voro_stretch: 1.0,
   },
   schema: [
-    { key: "t_vortex_bands", label: "Bands around", type: "range", min: 1, max: 64, step: 1 },
-    { key: "t_vortex_swirl", label: "Swirl turns", type: "range", min: -2, max: 2, step: 0.01 },
-    { key: "t_vortex_pitch", label: "Pitch, mm", type: "range", min: 4, max: 120, step: 0.5 },
-    { key: "t_vortex_depth", label: "Depth, mm", type: "range", min: 0, max: 3.5, step: 0.05 },
-    { key: "t_vortex_sharpness", label: "Sharpness", type: "range", min: 1, max: 8, step: 1 },
-    { key: "t_vortex_fade_bottom_mm", label: "Fade bottom, mm", type: "range", min: 5, max: 60, step: 1 },
+    // --- BASIC CONTROLS ---
+    { key: "t_voro_scale",    label: "Cell Size",       type: "range", min: 10,  max: 120, step: 1, group: "Texture" },
+    { key: "t_voro_depth",    label: "Texture Depth",   type: "range", min: 0,   max: 5.0, step: 0.1, group: "Texture" },
+    { key: "t_voro_style",    label: "Style (Bubble/Web)", type: "range", min: 0, max: 1, step: 0.01, group: "Texture" },
+    { key: "t_voro_twist",    label: "Twist Flow",      type: "range", min: -2,  max: 2,   step: 0.05, group: "Texture" },
+    
+    // --- ADVANCED CONTROLS ---
+    { key: "t_voro_wall",     label: "Wall Width",      type: "range", min: 0.05,max: 0.8, step: 0.01, group: "Texture", advanced: true },
+    { key: "t_voro_stretch",  label: "Vertical Stretch",type: "range", min: 0.2, max: 3.0, step: 0.1,  group: "Texture", advanced: true },
   ],
-  headroom: (p) => clamp(p.t_vortex_depth ?? 2.8, 0, 3.5),
+  headroom: (p) => clamp(p.t_voro_depth ?? 2.5, 0, 5.0),
   apply,
 };
