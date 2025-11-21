@@ -21,15 +21,20 @@ function apply(geometry, p) {
   const pitch = clamp(p.t_weave_pitch ?? 14, 2, 60);   // mm per vertical cycle
   const sharp = Math.max(1, Math.floor(p.t_weave_sharpness ?? 3));
   const depth = clamp(p.t_weave_depth ?? 2.5, 0, 3.0);
-  const kY = (2 * Math.PI) / pitch;
+  
+  // --- NEW FEATURE: Spiral Flow ---
+  // twists the whole pattern around the Y axis
+  const twistTurns = p.t_weave_twist ?? 0; 
 
-  const fadeMM = clamp(p.t_weave_fade_bottom_mm ?? 5, 5, 40); // 0 disables fade
+  const kY = (2 * Math.PI) / pitch;
+  const fadeMM = clamp(p.t_weave_fade_bottom_mm ?? 5, 5, 40); 
 
   const maxR = MAX_DIAMETER_MM / 2;
   const v = new THREE.Vector3();
   const n = new THREE.Vector3();
   const radial = new THREE.Vector3();
   const bottomY = (p.bottom_thickness ?? 3) + 0.1;
+  const height = p.height || 200; // Fallback if height missing
 
   // Precompute per vertex data
   const N = pos.count;
@@ -60,15 +65,19 @@ function apply(geometry, p) {
     if (theta < 0) theta += Math.PI * 2;
     thetaArr[i] = theta;
 
-    const f1 = Math.cos(theta * bands + v.y * kY);
-    const f2 = Math.cos(-theta * bands + v.y * kY);
+    // Apply Twist: Offset theta based on height fraction
+    const twistOffset = (v.y / height) * twistTurns * Math.PI * 2;
+    const twistedTheta = theta + twistOffset;
+
+    const f1 = Math.cos(twistedTheta * bands + v.y * kY);
+    const f2 = Math.cos(-twistedTheta * bands + v.y * kY);
     const ridge = 0.5 * (Math.abs(f1) + Math.abs(f2));
     const profile = Math.pow(Math.max(0, ridge), sharp);
 
     const slack = Math.max(0, maxR - r);
     let push = Math.min(depth, slack) * profile;
 
-    // bottom fade, smooth from 0 at slab to 1 at bottomY + fadeMM
+    // bottom fade
     if (fadeMM > 0) {
       const u = (v.y - bottomY) / Math.max(1e-6, fadeMM);
       const f = smooth01(u);
@@ -80,7 +89,7 @@ function apply(geometry, p) {
   }
 
   // Bin by angle and enforce 45 degree slope budget along each ray
-  const BINS = 720; // 0.5 degree bins
+  const BINS = 720; 
   const binLists = Array.from({ length: BINS }, () => []);
   const TWO_PI = Math.PI * 2;
 
@@ -154,15 +163,20 @@ export default {
     t_weave_bands: 28,
     t_weave_pitch: 14,
     t_weave_depth: 2.5,
+    t_weave_twist: 0,
     t_weave_sharpness: 3,
-    t_weave_fade_bottom_mm: 2, // 0 means no bottom fade
+    t_weave_fade_bottom_mm: 5,
   },
   schema: [
-    { key: "t_weave_bands",     label: "Weave bands",       type: "range", min: 2,  max: 64, step: 1 },
-    { key: "t_weave_pitch",     label: "Weave pitch, mm",   type: "range", min: 2,  max: 60, step: 0.5 },
-    { key: "t_weave_depth",     label: "Weave depth, mm",   type: "range", min: 0,  max: 3.0, step: 0.05 },
-    { key: "t_weave_sharpness", label: "Weave sharpness",   type: "range", min: 1,  max: 8,  step: 1 },
-    { key: "t_weave_fade_bottom_mm", label: "Fade bottom, mm", type: "range", min: 0, max: 40, step: 1 },
+    // --- Visible Controls ---
+    { key: "t_weave_bands",     label: "Weave Density",     type: "range", min: 2,  max: 64, step: 1, group: "Texture" },
+    { key: "t_weave_depth",     label: "Texture Depth",     type: "range", min: 0,  max: 3.0, step: 0.05, group: "Texture" },
+    { key: "t_weave_twist",     label: "Spiral Flow",       type: "range", min: -2, max: 2, step: 0.1, group: "Texture" }, // New Feature
+
+    // --- Advanced Controls ---
+    { key: "t_weave_pitch",     label: "Vertical Stretch",  type: "range", min: 2,  max: 60, step: 0.5, group: "Texture", advanced: true },
+    { key: "t_weave_sharpness", label: "Crispness",         type: "range", min: 1,  max: 8,  step: 1, group: "Texture", advanced: true },
+    { key: "t_weave_fade_bottom_mm", label: "Bottom Fade",  type: "range", min: 0, max: 40, step: 1, group: "Texture", advanced: true },
   ],
   headroom: (p) => clamp(p.t_weave_depth ?? 2.5, 0, 3.0),
   apply,
