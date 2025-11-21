@@ -24,6 +24,7 @@ function recommendedRadialSegments(p, caps) {
   return clamp(Math.round(want), 64, caps.maxRadial);
 }
 function recommendedResolution(p, caps) {
+  // If stacking is active, we need sharp transitions, so keep resolution high
   const base = Math.ceil((p.height ?? 220) / caps.stepMM);
   return clamp(base, 160, caps.maxRes);
 }
@@ -107,8 +108,19 @@ function buildPolyDesc(p) {
 // Return polygon scale factor s in 0..1 at angle theta and height t
 function polyScaleAt(theta, t, p) {
   const desc = p._poly;
+  
+  // --- NEW FEATURE: Stack Steps ---
+  // If steps > 0, we quantize 't' for the twist calculation.
+  // This creates a "stacked boxes" look instead of a smooth spiral.
+  let tTwist = t;
+  const steps = Math.floor(p.lp_stack_steps ?? 0);
+  if (steps > 0) {
+    // Snap t to the nearest segment
+    tTwist = Math.floor(t * steps) / steps;
+  }
+
   const twist = p.lp_twistTurns ?? 0;
-  const phi = desc.basePhase + 2 * Math.PI * twist * t;
+  const phi = desc.basePhase + 2 * Math.PI * twist * tTwist;
 
   // bring into 0..2π, then sector
   let a = theta - phi;
@@ -127,7 +139,7 @@ function polyScaleAt(theta, t, p) {
 function estimateMinScale(p) {
   const desc = p._poly;
   let minS = 1;
-  const stepsT = 16;
+  const stepsT = 24; // increased slightly for stack accuracy
   const stepsA = desc.S * 3;
 
   for (let i = 0; i <= stepsT; i++) {
@@ -150,7 +162,7 @@ function worstOutwardSlope(p) {
   if (H <= 0) return 0;
 
   const dRdy_linear = (p.topRadius - p.baseRadius) / H;
-  const stepsT = 48;
+  const stepsT = 64;
   const stepsA = p._poly.S * 16;
   const epsT  = 1 / (stepsT * 2);
 
@@ -247,6 +259,9 @@ function constrainParams(pIn = {}, caps = PREVIEW_CAPS) {
   out.lp_twistTurns = clamp(pIn.lp_twistTurns ?? 0.6, 0, 2);
   out.lp_rotateDeg  = clamp(pIn.lp_rotateDeg ?? 0, 0, 360);
   out.lp_seed       = Math.floor(pIn.lp_seed ?? 4242);
+  
+  // New stack feature
+  out.lp_stack_steps = clamp(Math.floor(pIn.lp_stack_steps ?? 0), 0, 50);
 
   // texture selection and headroom
   out.texture = pIn.texture ?? (textureOptions[0]?.value ?? "none");
@@ -273,8 +288,6 @@ function constrainParams(pIn = {}, caps = PREVIEW_CAPS) {
 }
 
 // Build circular lathe, then map XZ to polygon radius per angle and height.
-// Keep the circular hole region inside the bottom slab untouched.
-// Overhang enforcement is always applied.
 function buildLowPoly(params, caps = PREVIEW_CAPS) {
   const p = enforceOverhang(params, caps);
 
@@ -318,20 +331,21 @@ function buildLowPoly(params, caps = PREVIEW_CAPS) {
 // Dynamic schema
 function schemaFor(params) {
   const base = [
+    // --- PRIMARY CONTROLS (Visible by default) ---
     { key: "height",        label: "Height",           type: "range", min: 80,  max: MAX_SIZE, step: 1 },
-    { key: "wall",          label: "Wall thickness",   type: "range", min: MIN_THICK, max: MAX_THICK, step: 0.1 },
-
-    { key: "baseRadius",    label: "Base radius",      type: "range", min: 55, max: MAX_SIZE / 2, step: 0.5 },
-    { key: "topRadius",     label: "Top radius",       type: "range", min: 10, max: MAX_SIZE / 2, step: 0.5 },
-
-    { key: "lp_sides",      label: "Sides",            type: "range", min: 3,  max: 7, step: 1 },
-    { key: "lp_twistTurns", label: "Twist turns",      type: "range", min: 0,  max: 2, step: 0.01 },
-    { key: "lp_jitter",     label: "Vertex jitter",    type: "range", min: 0,  max: 0.5, step: 0.01 },
-    { key: "lp_rotateDeg",  label: "Rotate, degrees",  type: "range", min: 0,  max: 360, step: 1 },
-    { key: "lp_seed",       label: "Seed",             type: "range", min: 0,  max: 9999, step: 1 },
-
+    { key: "baseRadius",    label: "Bottom Size",      type: "range", min: 55, max: MAX_SIZE / 2, step: 0.5 },
+    { key: "topRadius",     label: "Top Size",         type: "range", min: 10, max: MAX_SIZE / 2, step: 0.5 },
+    { key: "lp_sides",      label: "Polygon Sides",    type: "range", min: 3,  max: 7, step: 1 },
+    { key: "lp_twistTurns", label: "Twist",            type: "range", min: 0,  max: 2, step: 0.01 },
     { key: "texture",       label: "Texture",          type: "select", options: textureOptions },
-    { key: "autoSpin",      label: "Auto spin",        type: "checkbox" },
+
+    // --- ADVANCED CONTROLS (Hidden until toggled) ---
+    { key: "lp_stack_steps",label: "Stack Segments",   type: "range", min: 0,  max: 20, step: 1, advanced: true }, // New Feature!
+    { key: "lp_jitter",     label: "Crumple",          type: "range", min: 0,  max: 0.5, step: 0.01, advanced: true },
+    { key: "lp_rotateDeg",  label: "Start Angle",      type: "range", min: 0,  max: 360, step: 1, advanced: true },
+    { key: "wall",          label: "Wall Thickness",   type: "range", min: MIN_THICK, max: MAX_THICK, step: 0.1, advanced: true },
+    { key: "lp_seed",       label: "Random Seed",      type: "range", min: 0,  max: 9999, step: 1, advanced: true },
+    { key: "autoSpin",      label: "Auto Spin",        type: "checkbox", advanced: true },
   ];
 
   const texId = params?.texture ?? (textureOptions[0]?.value ?? "none");
@@ -355,6 +369,7 @@ function defaultsFactory() {
 
     lp_sides: 5,
     lp_twistTurns: 0.6,
+    lp_stack_steps: 0, // smooth by default
     lp_jitter: 0.2,
     lp_rotateDeg: 0,
     lp_seed: 4242,
