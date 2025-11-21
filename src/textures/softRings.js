@@ -94,14 +94,16 @@ export default {
     t_ring_bothSides: true   // affect inside and outside, constant thickness
   },
   schema: [
-    { key: "t_ring_pitch",      label: "Ring pitch, mm",       type: "range", min: 6,  max: 60, step: 0.5 },
-    { key: "t_ring_depth",      label: "Ring depth, mm",       type: "range", min: 0,  max: 1.6, step: 0.05 },
-    { key: "t_ring_sharpness",  label: "Ring sharpness",       type: "range", min: 1,  max: 2.5,   step: .5 },
-    { key: "t_ring_fadeTop",    label: "Fade near top",        type: "range", min: 0,  max: 0.5, step: 0.01 },
-    { key: "t_ring_fadeBottom", label: "Fade near bottom",     type: "range", min: 0,  max: 0.5, step: 0.01 },
-    { key: "t_ring_bothSides",  label: "Affect inside and outside", type: "checkbox" }
+    // --- BASIC (Visible) ---
+    { key: "t_ring_pitch",      label: "Ring Spacing",         type: "range", min: 6,  max: 60, step: 0.5, group: "Texture" },
+    { key: "t_ring_depth",      label: "Bump Depth",           type: "range", min: 0,  max: 1.6, step: 0.05, group: "Texture" },
+
+    // --- ADVANCED (Hidden) ---
+    { key: "t_ring_sharpness",  label: "Ridge Sharpness",      type: "range", min: 1,  max: 2.5, step: 0.5, group: "Texture", advanced: true },
+    { key: "t_ring_fadeTop",    label: "Fade Top",             type: "range", min: 0,  max: 0.5, step: 0.01, group: "Texture", advanced: true },
+    { key: "t_ring_fadeBottom", label: "Fade Bottom",          type: "range", min: 0,  max: 0.5, step: 0.01, group: "Texture", advanced: true },
+    { key: "t_ring_bothSides",  label: "Constant Thickness",   type: "checkbox", group: "Texture", advanced: true }
   ],
   headroom: (p) => clamp(p.t_ring_depth ?? 2.0, 0, 3.0),
   apply,
 };
-
