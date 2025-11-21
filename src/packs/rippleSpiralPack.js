@@ -1,6 +1,6 @@
-// src/packs/gyroidGlowPack.js
-// Gyroid mapped shade, organic cell windows from a gyroid style field.
-// Fixed 80 mm hole, 3 mm bottom slab.
+// src/packs/rippleSpiralPack.js
+// Gyroid mapped shade (Gyroid Glow). Organic cell windows.
+// Fixed 80 mm hole. Print safe (overhang constrained).
 
 import * as THREE from "three";
 import { textures, textureOptions } from "../textures";
@@ -61,17 +61,14 @@ function makeProfileWithHole(p){
   return pts;
 }
 
-/* gyroid field mapped inward offset
-   f = sin(ax) * cos(ay) + sin(ay) * cos(az) + sin(az) * cos(ax)
-   Cylindrical coords mapped into x, y, z.
-*/
+/* gyroid field mapped inward offset */
 function gField(x,y,z,a){
   return Math.sin(a*x)*Math.cos(a*y) + Math.sin(a*y)*Math.cos(a*z) + Math.sin(a*z)*Math.cos(a*x);
 }
 
 function inwardOffsetRaw(theta, t, p, r){
   const a = clamp(p.gyroidFreq ?? 0.9, 0.2, 3);
-  const spin = (p.gyroidPhaseDeg ?? 0) * Math.PI / 180; // twist removed
+  const spin = (p.gyroidPhaseDeg ?? 0) * Math.PI / 180; 
 
   // local 3D point in mm space
   const H = p.height;
@@ -147,10 +144,7 @@ function constrainParams(pIn={}, caps=PREVIEW_CAPS){
   const tex = textures[out.texture];
   out.texture_headroom = tex?.headroom ? tex.headroom(out) : 0;
 
-  // options
   out.enforce45 = pIn.enforce45 ?? true;
-
-  // remove twist turns, keep compatibility if present in incoming params by ignoring it
   delete out.gyroidTwistTurns;
 
   clampTopFor45(out);
@@ -168,11 +162,7 @@ function constrainParams(pIn={}, caps=PREVIEW_CAPS){
   return out;
 }
 
-/* build with two pass slope guard
-   Pass 1, compute raw inward depths d[iT][iA], then walk upward and clamp so
-   r_eff[i] - r_eff[i-1] <= dy, which is a 45 degree limit.
-   Pass 2, apply the clamped depths to the mesh.
-*/
+/* build with two pass slope guard */
 function buildGyroidGlow(params, caps=PREVIEW_CAPS){
   const p = constrainParams(params, caps);
 
@@ -181,8 +171,8 @@ function buildGyroidGlow(params, caps=PREVIEW_CAPS){
   geom.computeVertexNormals();
 
   const H = p.height;
-  const N = p.resolution;                  // rings along height, matches profile samples
-  const A = p.radialSegments;              // angular samples
+  const N = p.resolution;                  
+  const A = p.radialSegments;              
   const dy = H / N;
 
   // Precompute base radii along height
@@ -192,7 +182,7 @@ function buildGyroidGlow(params, caps=PREVIEW_CAPS){
     rBase[i] = rOuterAt(t, p);
   }
 
-  // Raw inward depths per ring per angle
+  // Raw inward depths
   const dRaw = Array.from({length: N + 1}, ()=>new Float32Array(A));
   for(let i=0;i<=N;i++){
     const t = i / N;
@@ -203,48 +193,40 @@ function buildGyroidGlow(params, caps=PREVIEW_CAPS){
     }
   }
 
-  // Clamp outward growth to 45 degrees by marching upward per angle
+  // Clamp outward growth to 45 degrees
   const dClamped = Array.from({length: N + 1}, ()=>new Float32Array(A));
   for(let a=0;a<A;a++){
-    // start at i = 0
     const rEff0 = Math.max(0.5, rBase[0] - dRaw[0][a]);
     dClamped[0][a] = clamp(dRaw[0][a], 0, rBase[0] - 0.2);
     let lastEff = rEff0;
 
     for(let i=1;i<=N;i++){
       const rOut = rBase[i];
-      // desired eff radius
       const desired = Math.max(0.5, rOut - dRaw[i][a]);
-      // limit outward growth per step in y to dy
       const maxAllowed = lastEff + dy;
       const eff = Math.min(desired, maxAllowed);
-      // translate back to an inward d, and keep within 0..r
       const d = clamp(rOut - eff, 0, rOut - 0.2);
       dClamped[i][a] = d;
       lastEff = Math.max(0.5, rOut - d);
     }
   }
 
-  // Apply depths to geometry
+  // Apply depths
   const pos = geom.attributes.position;
   const v = new THREE.Vector3();
 
-  // helper to map a vertex to ring and angle indices
   function indexForVertex(x, y, z){
     const t = THREE.MathUtils.clamp(H>0 ? y / H : 0, 0, 1);
     const iT = Math.round(t * N);
-
     let theta = Math.atan2(z, x);
     if (theta < 0) theta += Math.PI*2;
     const iA = Math.round(theta / (Math.PI * 2) * A) % A;
-
-    return { iT, iA, t };
+    return { iT, iA };
   }
 
   for(let i=0;i<pos.count;i++){
     v.fromBufferAttribute(pos, i);
 
-    // keep the bottom slab and hole clearance unchanged
     if (v.y <= BOTTOM_THICK + 1e-6) {
       const r0 = Math.hypot(v.x, v.z);
       if (r0 <= p._holeRadius + 0.25) continue;
@@ -253,7 +235,6 @@ function buildGyroidGlow(params, caps=PREVIEW_CAPS){
     const { iT, iA } = indexForVertex(v.x, v.y, v.z);
     const r = Math.hypot(v.x, v.z);
 
-    // use clamped depth for this ring and angle
     const d = dClamped[iT][iA];
     const s = scaleFromOffset(r, d);
     v.x *= s; v.z *= s;
@@ -271,27 +252,42 @@ function buildGyroidGlow(params, caps=PREVIEW_CAPS){
 /* schema */
 function schemaFor(params){
   const base = [
-    { key:"height", label:"Height", type:"range", min:100, max:MAX_SIZE, step:1 },
-    { key:"wall", label:"Wall thickness", type:"range", min:MIN_THICK, max:MAX_THICK, step:0.1 },
-    { key:"baseRadius", label:"Base radius", type:"range", min:45, max:MAX_SIZE/2, step:0.5 },
-    { key:"topRadius", label:"Top radius", type:"range", min:10, max:MAX_SIZE/2, step:0.5 },
+    // --- SHAPE ---
+    { key:"height", label:"Height", type:"range", min:100, max:MAX_SIZE, step:1, group:"Shape" },
+    { key:"baseRadius", label:"Bottom Size", type:"range", min:45, max:MAX_SIZE/2, step:0.5, group:"Shape" },
+    { key:"topRadius", label:"Top Size", type:"range", min:10, max:MAX_SIZE/2, step:0.5, group:"Shape" },
 
-    { key:"gyroidFreq", label:"Field frequency", type:"range", min:0.2, max:3, step:0.01 },
-    { key:"gyroidPhaseDeg", label:"Field phase, deg", type:"range", min:0, max:360, step:1 },
-    { key:"gyroidThreshold", label:"Window threshold", type:"range", min:0, max:0.9, step:0.01 },
-    { key:"gyroidSharp", label:"Window sharpness", type:"range", min:1, max:12, step:0.1 },
-    { key:"inwardDepthMM", label:"Inward depth, mm", type:"range", min:0, max:2, step:0.1 },
-    { key:"depthTopScale", label:"Depth at top, scale", type:"range", min:0, max:1, step:0.01 },
+    // --- ORGANIC CELLS ---
+    { key:"gyroidFreq", label:"Cell Density", type:"range", min:0.2, max:3, step:0.01, group:"Organic Cells" },
+    { key:"gyroidThreshold", label:"Window Openness", type:"range", min:0, max:0.9, step:0.01, group:"Organic Cells" },
+    { key:"inwardDepthMM", label:"Emboss Depth", type:"range", min:0, max:4.0, step:0.1, group:"Organic Cells" },
 
-    { key:"texture", label:"Texture", type:"select", options: textureOptions },
-    { key:"autoSpin", label:"Auto spin", type:"checkbox" },
-    { key:"enforce45", label:"Enforce 45° max slope", type:"checkbox" },
+    // Advanced Organic
+    { key:"gyroidPhaseDeg", label:"Pattern Shift", type:"range", min:0, max:360, step:1, group:"Organic Cells", advanced: true },
+    { key:"gyroidSharp", label:"Edge Sharpness", type:"range", min:1, max:12, step:0.1, group:"Organic Cells", advanced: true },
+    { key:"depthTopScale", label:"Fade Top", type:"range", min:0, max:1, step:0.01, group:"Organic Cells", advanced: true },
+    
+    // Advanced Global
+    { key:"wall", label:"Wall Thickness", type:"range", min:MIN_THICK, max:MAX_THICK, step:0.1, group:"Shape", advanced: true },
+    { key:"autoSpin", label:"Auto Spin", type:"checkbox", group:"Shape", advanced: true },
+    { key:"enforce45", label:"Force 45° Slope", type:"checkbox", group:"Shape", advanced: true },
   ];
+
   const texId = params?.texture ?? (textureOptions[0]?.value ?? "none");
-  const extra = textures[texId]?.schema ?? [];
-  // remove any legacy twist control if a texture tries to add it
-  const filteredExtra = extra.filter(e => e.key !== "gyroidTwistTurns");
-  return [...base, ...filteredExtra];
+  const texDesc = textures[texId];
+  const rawTex = texDesc?.schema ?? [];
+
+  // Map texture fields to the "Texture" group
+  const texFields = rawTex.map(f => ({ ...f, group: "Texture" }));
+  
+  // Texture Selector
+  const texSelector = { key: "texture", label: "Style", type: "select", options: textureOptions, group: "Texture" };
+
+  return [
+    ...base,
+    texSelector,
+    ...texFields
+  ];
 }
 
 function defaultsFactory(){
@@ -300,9 +296,12 @@ function defaultsFactory(){
     height:220, wall:1.2,
     baseRadius:116, topRadius:92,
 
-    gyroidFreq:0.9, gyroidPhaseDeg:0,
-    gyroidThreshold:0.15, gyroidSharp:3,
-    inwardDepthMM:3.0, depthTopScale:0.4,
+    gyroidFreq:0.9, 
+    gyroidPhaseDeg:0,
+    gyroidThreshold:0.15, 
+    gyroidSharp:3,
+    inwardDepthMM:3.0, 
+    depthTopScale:0.4,
 
     texture:firstTex, autoSpin:true, enforce45:true,
   };
