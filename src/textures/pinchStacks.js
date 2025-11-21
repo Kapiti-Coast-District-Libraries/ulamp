@@ -1,4 +1,5 @@
-// src/morphs/pinchStacks.js
+// src/textures/orbitOffset.js
+// (Internal ID: pinchStacks)
 import * as THREE from "three";
 
 const MAX_DIAMETER_MM = 240;
@@ -74,7 +75,7 @@ function apply(geometry, p) {
 
 export default {
   id: "pinchStacks",
-  label: "Pinch stacks",
+  label: "Pinch Stacks",
   defaults: {
     m_ps_count: 3,
     m_ps_spread_mm: 40,
@@ -84,12 +85,15 @@ export default {
     m_ps_ease_bottom_mm: 10,
   },
   schema: [
-    { key: "m_ps_count", label: "Bands", type: "range", min: 1, max: 12, step: 1 },
-    { key: "m_ps_spread_mm", label: "Band spacing, mm", type: "range", min: 10, max: 160, step: 1 },
-    { key: "m_ps_width_mm", label: "Band width, mm", type: "range", min: 6, max: 80, step: 1 },
-    { key: "m_ps_depth", label: "Max pinch, fraction", type: "range", min: 0, max: 0.95, step: 0.01 },
-    { key: "m_ps_theta_skew", label: "Angular skew", type: "range", min: 0, max: 12, step: 0.1 },
-    { key: "m_ps_ease_bottom_mm", label: "Bottom ease, mm", type: "range", min: 0, max: 80, step: 1 },
+    // --- MAIN TEXTURE CONTROLS ---
+    { key: "m_ps_count",      label: "Stack Count",      type: "range", min: 1, max: 12, step: 1, group: "Texture" },
+    { key: "m_ps_depth",      label: "Pinch Strength",   type: "range", min: 0, max: 0.95, step: 0.01, group: "Texture" },
+    { key: "m_ps_spread_mm",  label: "Spacing (mm)",     type: "range", min: 10, max: 160, step: 1, group: "Texture" },
+
+    // --- ADVANCED TEXTURE CONTROLS ---
+    { key: "m_ps_width_mm",       label: "Pinch Softness",   type: "range", min: 6, max: 80, step: 1, group: "Texture", advanced: true },
+    { key: "m_ps_theta_skew",     label: "Twist / Skew",     type: "range", min: 0, max: 12, step: 0.1, group: "Texture", advanced: true },
+    { key: "m_ps_ease_bottom_mm", label: "Base Safe Zone",   type: "range", min: 0, max: 80, step: 1, group: "Texture", advanced: true },
   ],
   headroom: () => 0,
   apply,
