@@ -1,4 +1,5 @@
 // src/textures/constantFolds.js
+// Renamed to "Paper Folds" in UI for friendliness
 import * as THREE from "three";
 
 const MAX_DIAMETER_MM = 240;
@@ -10,7 +11,6 @@ function smooth01(u) {
 
 // ##################################################################
 // #               START: 3D SIMPLEX NOISE LIBRARY
-// #  (This is the same SimplexNoise class as the previous file)
 // ##################################################################
 const F3 = 1.0 / 3.0;
 const G3 = 1.0 / 6.0;
@@ -104,7 +104,7 @@ class SimplexNoise {
       t3 *= t3;
       n3 = t3 * t3 * this.dot(this.grad3[this.permMod12[ii + 1 + this.perm[jj + 1 + this.perm[kk + 1]]]], x3, y3, z3);
     }
-    return 32.0 * (n0 + n1 + n2 + n3); // Value is between -1 and 1
+    return 32.0 * (n0 + n1 + n2 + n3);
   }
 
   dot(g, x, y, z) {
@@ -115,12 +115,8 @@ class SimplexNoise {
 // #                 END: 3D SIMPLEX NOISE LIBRARY
 // ##################################################################
 
-// --- Create one persistent noise generator ---
 const _noiseGen = new SimplexNoise(Math.random);
-
-// Pre-allocate vectors
 const _v = new THREE.Vector3();
-const _n = new THREE.Vector3();
 const _radial = new THREE.Vector3();
 
 function apply(geometry, p) {
@@ -128,11 +124,12 @@ function apply(geometry, p) {
   const nor = geometry.attributes.normal;
   if (!pos || !nor) return geometry;
 
-  const h_size = clamp(p.t_fold_h_size ?? 80, 20, 200);
-  const v_size = clamp(p.t_fold_v_size ?? 60, 20, 200);
+  const h_size = clamp(p.t_fold_h_size ?? 80, 20, 300);
+  const v_size = clamp(p.t_fold_v_size ?? 60, 20, 300);
   const depth = clamp(p.t_fold_depth ?? 4.0, 0, 10.0);
   const sharp = clamp(p.t_fold_sharpness ?? 1.5, 1.0, 5.0);
   const fadeMM = clamp(p.t_fold_fade_bottom_mm ?? 5, 5, 40);
+  const slant = p.t_fold_slant ?? 0; // -1 to 1
   
   const h_freq = 1.0 / h_size;
   const v_freq = 1.0 / v_size;
@@ -142,7 +139,6 @@ function apply(geometry, p) {
 
   for (let i = 0; i < pos.count; i++) {
     _v.fromBufferAttribute(pos, i);
-    _n.fromBufferAttribute(nor, i);
 
     if (_v.y <= bottomY) continue;
 
@@ -151,24 +147,19 @@ function apply(geometry, p) {
     if (r < 1e-6) continue;
     _radial.multiplyScalar(1 / r);
 
-    // --- FIX FOR CONSTANT THICKNESS ---
-    
-    // 1. REMOVED: The check for outward-facing normals.
-    // We now process *all* vertices (inner and outer).
-    // if (n.dot(radial) <= 0.0) continue; 
+    // Calculate coherent noise coordinates
+    // We add 'slant' by mixing Y height into the X/Z coordinates
+    const skew = _v.y * slant * 0.5;
 
-    // 2. CHANGED: Calculate noise coords based on a *consistent radius* (maxR)
-    // This ensures inner and outer vertices get the SAME noise value.
-    const noise_x = _radial.x * maxR * h_freq;
+    const noise_x = (_radial.x * maxR + skew) * h_freq;
     const noise_y = _v.y * v_freq;
-    const noise_z = _radial.z * maxR * h_freq;
+    const noise_z = (_radial.z * maxR + skew) * h_freq;
     
     const noise_val = _noiseGen.noise3D(noise_x, noise_y, noise_z);
 
-    // 3. Calculate displacement (same as before)
     let displacement = Math.sign(noise_val) * Math.pow(Math.abs(noise_val), sharp);
 
-    // 4. Calculate fade (same as before)
+    // Fade at bottom
     let profile = 1.0;
     if (fadeMM > 0) {
       const u = (_v.y - bottomY) / Math.max(1e-6, fadeMM);
@@ -177,14 +168,6 @@ function apply(geometry, p) {
 
     let push = displacement * depth * profile;
 
-    // 5. REMOVED: The "slack" check.
-    // We push the inner and outer wall regardless of the max diameter
-    // to ensure they move together. The 'headroom' export
-    // tells the main app how much space the texture needs.
-    
-    // 6. Apply the push along the radial vector.
-    // Since 'push' is identical for inner/outer vertices and
-    // '_radial' is identical, the thickness is preserved.
     if (Math.abs(push) > 1e-4) {
       _v.addScaledVector(_radial, push);
       pos.setXYZ(i, _v.x, _v.y, _v.z);
@@ -198,20 +181,25 @@ function apply(geometry, p) {
 
 export default {
   id: "constantFolds",
-  label: "Constant Folds",
+  label: "Paper Folds", // Friendlier name
   defaults: {
     t_fold_h_size: 80,
     t_fold_v_size: 60,
     t_fold_depth: 4.0,
     t_fold_sharpness: 1.5,
-    t_fold_fade_bottom_mm: 5,
+    t_fold_fade_bottom_mm: 10,
+    t_fold_slant: 0,
   },
   schema: [
-    { key: "t_fold_h_size",        label: "Horiz. fold size, mm", type: "range", min: 20, max: 200, step: 1 },
-    { key: "t_fold_v_size",        label: "Vert. fold size, mm",  type: "range", min: 20, max: 200, step: 1 },
-    { key: "t_fold_depth",         label: "Depth (in/out), mm",   type: "range", min: 0,  max: 10.0, step: 0.1 },
-    { key: "t_fold_sharpness",     label: "Crease sharpness",     type: "range", min: 1.0, max: 5.0, step: 0.1 },
-    { key: "t_fold_fade_bottom_mm",label: "Fade bottom, mm",      type: "range", min: 5,  max: 40,  step: 1 },
+    // --- BASIC TEXTURE CONTROLS ---
+    { key: "t_fold_depth",         label: "Fold Depth",    type: "range", min: 0,  max: 10.0, step: 0.1 },
+    { key: "t_fold_h_size",        label: "Pattern Size",  type: "range", min: 20, max: 200, step: 1 },
+
+    // --- ADVANCED TEXTURE CONTROLS ---
+    { key: "t_fold_slant",         label: "Wind Slant",    type: "range", min: -1.0, max: 1.0, step: 0.1, advanced: true }, // New!
+    { key: "t_fold_sharpness",     label: "Crease Sharpness", type: "range", min: 1.0, max: 5.0, step: 0.1, advanced: true },
+    { key: "t_fold_v_size",        label: "Vertical Stretch", type: "range", min: 20, max: 200, step: 1, advanced: true },
+    { key: "t_fold_fade_bottom_mm",label: "Bottom Fade mm",  type: "range", min: 5,  max: 40,  step: 1,   advanced: true },
   ],
   headroom: (p) => clamp(p.t_fold_depth ?? 4.0, 0, 10.0),
   apply,
