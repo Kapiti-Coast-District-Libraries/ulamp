@@ -1,6 +1,6 @@
 // src/packs/sockBallsPack.js
-// "Bubble Clusters" (formerly Sock Balls).
-// Tube sock over tennis balls vibe, print safe, 240 mm envelope, fixed 80 mm hole.
+// Bubble Cluster (formerly Sock Balls).
+// Random or spiraling spherical bulges. Fixed 80 mm hole. Print safe.
 
 import * as THREE from "three";
 import { textures, textureOptions } from "../textures";
@@ -9,7 +9,7 @@ const MAX_SIZE = 240;
 const MIN_THICK = 0.8;
 const MAX_THICK = 1.2;
 const BOTTOM_THICK = 3;
-const FIXED_HOLE_DIAMETER = 80; // mm, fixed as requested
+const FIXED_HOLE_DIAMETER = 80;
 
 function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
 
@@ -34,7 +34,7 @@ function recommendedResolution(p, caps) {
   return clamp(base, 160, caps.maxRes);
 }
 
-/* ---------------- baseline radius, headroom ---------------- */
+/* ---------------- baseline radius ---------------- */
 function rOuterAt(t, p) {
   const r = p.baseRadius + (p.topRadius - p.baseRadius) * t;
   const maxR = MAX_SIZE / 2;
@@ -43,7 +43,7 @@ function rOuterAt(t, p) {
 }
 function rInnerAt(t, p) { return Math.max(rOuterAt(t, p) - p.wall, 0.5); }
 
-/* ---------------- lathe profile with fixed 80 mm hole ---------------- */
+/* ---------------- lathe profile ---------------- */
 function makeProfileWithHole(p) {
   const pts = [];
   const H = p.height;
@@ -75,20 +75,36 @@ function makeProfileWithHole(p) {
   return pts;
 }
 
-/* ---------------- spherical balls ---------------- */
+/* ---------------- spherical balls logic ---------------- */
 function computeBalls(p) {
   const H = p.height;
-  // Use internal default seed since slider was removed
   const rng = makeRng(Math.floor(p.b_seed ?? 1234));
   const count = clamp(Math.floor(p.b_count ?? 3), 1, 70);
 
   const yMin = BOTTOM_THICK + p.b_supportRadius + 4;
   const yMax = H - Math.max(8, p.b_supportRadius * 0.6);
 
+  const spiralStr = p.b_spiral ?? 0; // 0 = random, 1+ = spiral alignment
+
   const balls = [];
   for (let i = 0; i < count; i++) {
-    const y = yMin + (yMax - yMin) * rng.next();
-    const phi = rng.next() * Math.PI * 2;
+    let y, phi;
+
+    if (spiralStr > 0.1) {
+        // Spiral distribution
+        const t = i / Math.max(1, count - 1);
+        y = yMin + (yMax - yMin) * t;
+        // rotations = spiralStr * 2 (just an arbitrary scalar to make it spin)
+        const totalRot = spiralStr * 4 * Math.PI; 
+        phi = (t * totalRot) % (Math.PI * 2);
+        
+        // Add a tiny bit of jitter so it's not robotic
+        phi += (rng.next() - 0.5) * 0.2; 
+    } else {
+        // Pure random distribution
+        y = yMin + (yMax - yMin) * rng.next();
+        phi = rng.next() * Math.PI * 2;
+    }
 
     const dj = clamp(p.b_jitter ?? 0.2, 0, 1);
     const depth = p.b_depth * (1 - 0.5 * dj + rng.next() * dj);
@@ -108,7 +124,7 @@ function capHeightAtDistance(d, h, s, R) {
   return Math.max(0, z);
 }
 
-// maximum spherical cap from all balls, with soft fades near rim and slab
+// Field of maximum bulge at (theta, y)
 function bulgeFieldMM(theta, y, p) {
   const balls = p._balls;
   if (!balls || balls.length === 0) return 0;
@@ -136,9 +152,9 @@ function bulgeFieldMM(theta, y, p) {
   return m * Math.max(0, Math.min(1, tFade * bFade));
 }
 
-/* ---------------- overhang guard, always on ---------------- */
+/* ---------------- overhang guard (ALWAYS ON) ---------------- */
 
-const MAX_OVERHANG_SLOPE = 1.0; // mm radial growth per 1 mm Z, equals 45 degrees
+const MAX_OVERHANG_SLOPE = 1.0; // 45 degrees
 
 function worstOutwardSlopeSock(p) {
   const H = p.height;
@@ -173,7 +189,6 @@ function worstOutwardSlopeSock(p) {
   return worst;
 }
 
-// cap straight profile so it cannot violate 45 degrees by itself
 function clampTopFor45(p) {
   if (p.topRadius <= p.baseRadius) return;
   const maxAllowedTop = p.baseRadius + p.height * MAX_OVERHANG_SLOPE;
@@ -181,30 +196,28 @@ function clampTopFor45(p) {
 }
 
 function enforceOverhangSock(pIn, caps) {
-  // start from normal constraints
   let p = constrainParamsRaw(pIn, caps);
 
-  // initial straight profile clamp
+  // 1. Clamp straight cone
   clampTopFor45(p);
 
-  // iterate, relax ball depth first, then footprint, then taper, then small shrink
+  // 2. Iteratively relax bubbles if they are too aggressive
   let tries = 0;
   while (tries < 30) {
-    // recompute balls since b_depth or footprint may change
-    p._balls = computeBalls(p);
+    p._balls = computeBalls(p); // Re-roll ball positions
 
     const worst = worstOutwardSlopeSock(p);
     if (worst <= MAX_OVERHANG_SLOPE + 1e-4) break;
 
-    // 1. reduce ball depth, strongest effect on d(delta)/dy near crests
+    // Strategy A: Reduce Pop Distance (Depth)
     if (p.b_depth > 4) {
       p.b_depth = Math.max(4, p.b_depth * 0.85);
-      p.b_headroom = p.b_depth; // keep headroom consistent
+      p.b_headroom = p.b_depth; 
       tries++;
       continue;
     }
 
-    // 2. reduce footprint, softens curvature and lowers slope
+    // Strategy B: Reduce Diameter (make bubbles smaller)
     if (p.b_supportDiameter > 60) {
       p.b_supportDiameter = Math.max(60, p.b_supportDiameter * 0.9);
       p.b_supportRadius = p.b_supportDiameter * 0.5;
@@ -212,7 +225,7 @@ function enforceOverhangSock(pIn, caps) {
       continue;
     }
 
-    // 3. reduce outward flare of straight profile if any remains
+    // Strategy C: Reduce outward cone flare
     if (p.topRadius > p.baseRadius) {
       const dRdy = (p.topRadius - p.baseRadius) / p.height;
       const scale = clamp((dRdy - 0.15) / Math.max(1e-9, dRdy), 0.7, 0.98);
@@ -221,20 +234,18 @@ function enforceOverhangSock(pIn, caps) {
       continue;
     }
 
-    // 4. last resort, tiny uniform inward nudge of both radii
+    // Strategy D: Shrink everything slightly
     p.baseRadius *= 0.995;
     p.topRadius  *= 0.995;
     tries++;
   }
 
-  // final recompute of balls and internals for building
   p._balls = computeBalls(p);
   return p;
 }
 
-/* ---------------- constraints and build ---------------- */
+/* ---------------- constraints ---------------- */
 
-// split out a raw constrain so the enforcer can call it without recursion
 function constrainParamsRaw(pIn = {}, caps = PREVIEW_CAPS) {
   const out = { ...pIn };
 
@@ -245,47 +256,36 @@ function constrainParamsRaw(pIn = {}, caps = PREVIEW_CAPS) {
   out.baseRadius = clamp(pIn.baseRadius ?? 110, baseMin, MAX_SIZE / 2);
   out.topRadius  = clamp(pIn.topRadius  ?? 90,  out.wall + 2, MAX_SIZE / 2);
 
-  // balls
+  // Bubbles
   out.b_count           = clamp(Math.floor(pIn.b_count ?? 4), 1, 70);
   out.b_depth           = clamp(pIn.b_depth ?? 16, 4, 35);
   out.b_supportDiameter = clamp(pIn.b_supportDiameter ?? 75, 40, 160);
   out.b_supportRadius   = out.b_supportDiameter * 0.5;
   out.b_jitter          = clamp(pIn.b_jitter ?? 0.2, 0, 1);
-  
-  // Use internal seed if not provided (UI slider removed)
   out.b_seed            = Math.floor(pIn.b_seed ?? 1234);
+  out.b_spiral          = clamp(pIn.b_spiral ?? 0, 0, 5); // New feature
 
-  // texture selection and headroom
   out.texture = pIn.texture ?? (textureOptions[0]?.value ?? "none");
   const tex = textures[out.texture];
   out.texture_headroom = tex?.headroom ? tex.headroom(out) : 0;
 
-  // reserve headroom equal to ball depth so full height is preserved
   out.b_headroom = out.b_depth;
-
-  // fixed 80 mm hole
   out._holeRadius = FIXED_HOLE_DIAMETER * 0.5;
-
-  // auto detail
   out.radialSegments = recommendedRadialSegments(out, caps);
   out.resolution     = recommendedResolution(out, caps);
-
-  // Removed autoSpin default (defaults to false if undefined, or handled by Viewport)
-  out.autoSpin = pIn.autoSpin ?? false; 
+  out.autoSpin = false; // Forced off
   out.bottom_thickness = BOTTOM_THICK;
 
-  // precompute balls
   out._balls = computeBalls(out);
 
   return out;
 }
 
-// always enforced wrapper
 function constrainParams(pIn = {}, caps = PREVIEW_CAPS) {
   return enforceOverhangSock(pIn, caps);
 }
 
-/* ---------------- apply bulges, keep wall constant ---------------- */
+/* ---------------- apply bulges ---------------- */
 function applySockBulges(geom, p) {
   const pos = geom.attributes.position;
   if (!pos) return geom;
@@ -331,36 +331,51 @@ function applySockBulges(geom, p) {
   return geom;
 }
 
-/* ---------------- schema (Grouped) ---------------- */
+/* ---------------- build ---------------- */
+function buildSockShade(params, caps = PREVIEW_CAPS) {
+  const p = constrainParams(params, caps);
+  const profile = makeProfileWithHole(p);
+  const geom = new THREE.LatheGeometry(profile, p.radialSegments);
+  geom.computeVertexNormals();
+
+  applySockBulges(geom, p);
+
+  const entry = textures[p.texture];
+  return entry?.apply ? entry.apply(geom, p) : geom;
+}
+
+/* ---------------- schema ---------------- */
 function schemaFor(params) {
   const base = [
     // --- SHAPE GROUP ---
     { key: "height",        label: "Height",             type: "range", min: 80,  max: MAX_SIZE, step: 1, group: "Shape" },
     { key: "baseRadius",    label: "Bottom Size",        type: "range", min: 45, max: MAX_SIZE / 2, step: 0.5, group: "Shape" },
     { key: "topRadius",     label: "Top Size",           type: "range", min: 10, max: MAX_SIZE / 2, step: 0.5, group: "Shape" },
-    { key: "b_count",       label: "Bubble Count",       type: "range", min: 1, max: 70, step: 1, group: "Shape" },
-    { key: "b_supportDiameter", label: "Bubble Size",    type: "range", min: 40, max: 160, step: 1, group: "Shape" },
-    { key: "b_depth",       label: "Bulge Depth",        type: "range", min: 4, max: 35, step: 0.5, group: "Shape" },
+    
+    { key: "b_count",       label: "Bubble Density",     type: "range", min: 1, max: 70, step: 1, group: "Shape" },
+    { key: "b_depth",       label: "Pop Distance",       type: "range", min: 4, max: 35, step: 0.5, group: "Shape" },
+    { key: "b_supportDiameter", label: "Bubble Width",   type: "range", min: 40, max: 160, step: 1, group: "Shape" },
+    
+    // New Spiral Feature
+    { key: "b_spiral",      label: "Spiral Flow",        type: "range", min: 0, max: 5, step: 0.1, group: "Shape" },
 
     // Advanced Shape
-    { key: "b_jitter",      label: "Random Variation",   type: "range", min: 0, max: 1, step: 0.05, group: "Shape", advanced: true },
     { key: "wall",          label: "Wall Thickness",     type: "range", min: MIN_THICK, max: MAX_THICK, step: 0.1, group: "Shape", advanced: true },
+    { key: "b_jitter",      label: "Pop Variation",      type: "range", min: 0, max: 1, step: 0.05, group: "Shape", advanced: true },
+    { key: "b_seed",        label: "Pattern Seed",       type: "range", min: 0, max: 9999, step: 1, group: "Shape", advanced: true },
   ];
 
   const texId = params?.texture ?? (textureOptions[0]?.value ?? "none");
   const texDesc = textures[texId];
   const rawTex = texDesc?.schema ?? [];
-
-  // Map texture fields to Texture group
   const texFields = rawTex.map(f => ({ ...f, group: "Texture" }));
-  
-  // Texture Selector
+
   const texSelector = { key: "texture", label: "Style", type: "select", options: textureOptions, group: "Texture" };
 
   return [
     ...base,
     texSelector,
-    ...texFields,
+    ...texFields
   ];
 }
 
@@ -370,27 +385,24 @@ function defaultsFactory() {
   const d = {
     height: 220,
     wall: 0.8,
-
     baseRadius: 60,
     topRadius: 60,
-
     b_count: 60,
     b_depth: 16,
     b_supportDiameter: 75,
     b_jitter: 0.2,
-    b_seed: 1234, // Internal default
-
+    b_seed: 1234,
+    b_spiral: 0, // default to random
     texture: firstTex,
-    autoSpin: false,
   };
   const tex = textures[firstTex];
   return tex?.defaults ? { ...d, ...tex.defaults } : d;
 }
 
-/* ---------------- model export ---------------- */
+/* ---------------- export ---------------- */
 export const models = {
   sock: {
-    label: "Bubble Clusters",
+    label: "Bubble Cluster",
     schema: (params) => schemaFor(params),
     defaults: () => defaultsFactory(),
     build: (p) => buildSockShade(p, PREVIEW_CAPS),
@@ -406,7 +418,7 @@ function exportSTL(params) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "lampshade_bubble_clusters.stl";
+    a.download = "lampshade_bubble_cluster.stl";
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -414,5 +426,5 @@ function exportSTL(params) {
   });
 }
 
-const label = "Lampshade, Bubble Clusters";
+const label = "Lampshade, Bubble Cluster";
 export default { label, models, export: exportSTL };
