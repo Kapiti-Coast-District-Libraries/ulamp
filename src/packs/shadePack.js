@@ -5,12 +5,15 @@ import { textures, textureOptions, textureOrder } from "../textures";
 const MAX_SIZE = 240;   // mm for height and diameter
 const MIN_THICK = 0.8;  // mm
 const BOTTOM_THICK = 3; // mm
+const FIXED_HOLE_DIAMETER = 80; // Strict requirement
 
 function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
+
 const PREVIEW_CAPS = { maxRadial: 540, maxRes: 700, stepMM: 0.6, perBandBase: 18 };
 const EXPORT_CAPS  = { maxRadial: 1200, maxRes: 1400, stepMM: 0.4, perBandBase: 22 };
 
 function firstTextureId() { return textureOrder[0] ?? "none"; }
+
 function withTextureDefaults(params) {
   const texKey = params?.texture ?? firstTextureId();
   const desc = textures[texKey];
@@ -19,16 +22,38 @@ function withTextureDefaults(params) {
 
 /* base outer radius along height, with reserved headroom */
 function rOuterAt(t, p) {
+  // 1. Linear interpolation (Cone)
   let r = p.baseRadius + (p.topRadius - p.baseRadius) * t;
-  const sigma = 0.15 * p.height;
+  
+  // 2. Apply Curvature (Belly/Hourglass)
+  // Sigma scales with height to keep proportions natural
+  const sigma = 0.18 * p.height; 
   const y = t * p.height;
   const yc = p.bellyHeight * p.height;
-  const belly = p.belly * Math.exp(-((y - yc) ** 2) / (2 * sigma ** 2));
-  r += belly;
+  
+  const bump = Math.exp(-((y - yc) ** 2) / (2 * sigma ** 2));
+  const curvature = p.belly * bump;
+  
+  r += curvature;
+
+  // 3. Clamp to safety limits
   const maxR = MAX_SIZE / 2;
+  // Ensure we don't pinch thinner than the hole + wall + margin
+  const minSafeR = (FIXED_HOLE_DIAMETER / 2) + p.wall + 2;
+  
+  // Only enforce minSafeR near the bottom (where the hole is)
+  // Higher up, it can get thinner (like a bottle neck), but not too thin to print.
+  const absoluteMin = 15; 
+  
+  // Smooth blend for safety constraint? 
+  // For now, simple max is enough to prevent inverted geometry.
+  const limitBottom = t < 0.1 ? minSafeR : absoluteMin;
+
+  r = Math.max(limitBottom, r);
   r = Math.min(r, Math.max(0.5, maxR - (p.texture_headroom ?? 0)));
   return r;
 }
+
 function rInnerAt(t, p) { return Math.max(rOuterAt(t, p) - p.wall, 0.5); }
 
 function recommendedRadialSegments(p, caps) {
@@ -47,6 +72,7 @@ function recommendedRadialSegments(p, caps) {
   const want = Math.max(96, bands * perBand);
   return clamp(Math.round(want), 48, caps.maxRadial);
 }
+
 function recommendedResolution(p, caps) {
   const base = Math.ceil((p.height ?? 220) / caps.stepMM);
   return clamp(base, 140, caps.maxRes);
@@ -60,16 +86,17 @@ function constrainParams(pIn = {}, caps = PREVIEW_CAPS) {
   out.height = clamp(p0.height ?? 220, 80, MAX_SIZE);
   out.wall   = clamp(p0.wall ?? 1.0, MIN_THICK, 1.5);
 
-  // base cannot go below 90 mm radius, and must clear wall
-  const baseMin = Math.max(45, out.wall + 2);
+  // Base must be at least large enough to hold the hardware hole
+  const baseMin = (FIXED_HOLE_DIAMETER / 2) + out.wall + 4;
   out.baseRadius = clamp(p0.baseRadius ?? 110, baseMin, MAX_SIZE / 2);
 
-  // top can be slimmer, just clear wall
+  // top can be slimmer
   const topMin = out.wall + 2;
   out.topRadius  = clamp(p0.topRadius  ?? 90,  topMin, MAX_SIZE / 2);
 
-  out.belly       = clamp(p0.belly ?? 20, 0, 40);
-  out.bellyHeight = clamp(p0.bellyHeight ?? 0.5, 0.2, 0.8);
+  // Belly / Curvature: Negative = Hourglass, Positive = Barrel
+  out.belly       = clamp(p0.belly ?? 20, -30, 40);
+  out.bellyHeight = clamp(p0.bellyHeight ?? 0.5, 0.1, 0.9);
 
   // texture headroom
   const texDesc = textures[out.texture] || null;
@@ -82,16 +109,13 @@ function constrainParams(pIn = {}, caps = PREVIEW_CAPS) {
   out.radialSegments = recRad;
   out.resolution = recRes;
 
-  // bottom hole, clamp to inner radius at slab height
-  const H = out.height;
-  const rInnerSlab = Math.max(rOuterAt(BOTTOM_THICK / H, out) - out.wall, 0.5);
-  const wantedDia = clamp(p0.holeDiameter ?? 80, 20, 200);
-  const maxDia = Math.max(10, 2 * (rInnerSlab - 0.5));
-  out.holeDiameter = clamp(wantedDia, 20, maxDia);
-  out._holeRadius = out.holeDiameter * 0.5;
-
-  out.autoSpin = p0.autoSpin ?? true;
+  // Enforce fixed hole size internally
+  out._holeRadius = FIXED_HOLE_DIAMETER * 0.5;
   out.bottom_thickness = BOTTOM_THICK;
+  
+  // Removed autoSpin
+  out.autoSpin = false;
+
   return out;
 }
 
@@ -99,7 +123,7 @@ function makeProfileWithHole(p) {
   const pts = [];
   const H = p.height;
   const N = p.resolution;
-  const rHole = Math.max(1, p._holeRadius || 0);
+  const rHole = p._holeRadius; 
 
   // start at inner hole edge on the bottom
   pts.push(new THREE.Vector2(rHole, 0));
@@ -143,24 +167,37 @@ function buildSolidShade(params) {
   return texDesc?.apply ? texDesc.apply(geom, p) : geom;
 }
 
-// dynamic schema, base radius min 90 mm, hole slider included
+// Dynamic Schema with Groups
 function schemaFor(params) {
   const texKey = params?.texture ?? firstTextureId();
   const texDesc = textures[texKey];
+  
   const base = [
-    { key: "height",     label: "Height",         type: "range", min: 80,  max: MAX_SIZE, step: 1 },
-    { key: "baseRadius", label: "Base radius",    type: "range", min: 45,  max: MAX_SIZE / 2, step: 0.5 },
-    { key: "topRadius",  label: "Top radius",     type: "range", min: 10,  max: MAX_SIZE / 2, step: 0.5 },
-    { key: "wall",       label: "Wall thickness", type: "range", min: MIN_THICK, max: 1.2, step: 0.1 },
-    { key: "belly",      label: "Belly amount",   type: "range", min: 0,   max: 40, step: 0.5 },
-    { key: "bellyHeight",label: "Belly height",   type: "range", min: 0.2, max: 0.8, step: 0.01 },
+    // --- SHAPE GROUP ---
+    { key: "height",     label: "Height",         type: "range", min: 80,  max: MAX_SIZE, step: 1, group: "Shape" },
+    { key: "baseRadius", label: "Base Size",      type: "range", min: 45,  max: MAX_SIZE / 2, step: 0.5, group: "Shape" },
+    { key: "topRadius",  label: "Top Size",       type: "range", min: 10,  max: MAX_SIZE / 2, step: 0.5, group: "Shape" },
+    
+    // Enhanced Curvature Control
+    { key: "belly",      label: "Curvature",      type: "range", min: -30, max: 40, step: 0.5, group: "Shape" }, // +/- for hourglass/barrel
+    { key: "bellyHeight",label: "Curve Position", type: "range", min: 0.1, max: 0.9, step: 0.01, group: "Shape" },
 
-
-    { key: "texture",    label: "Texture",        type: "select", options: textureOptions },
+    // --- ADVANCED GROUP ---
+    { key: "wall",       label: "Wall Thickness", type: "range", min: MIN_THICK, max: 1.2, step: 0.1, group: "Shape", advanced: true },
   ];
-  const tex = texDesc?.schema ?? [];
-  const tail = [{ key: "autoSpin", label: "Auto spin", type: "checkbox" }];
-  return [...base, ...tex, ...tail];
+
+  // --- TEXTURE GROUP ---
+  const texSelector = { key: "texture", label: "Style", type: "select", options: textureOptions, group: "Texture" };
+  
+  // Remap texture fields to the Texture group
+  const rawTex = texDesc?.schema ?? [];
+  const texFields = rawTex.map(f => ({ ...f, group: "Texture" }));
+
+  return [
+    ...base,
+    texSelector,
+    ...texFields
+  ];
 }
 
 function defaultsFactory() {
@@ -170,12 +207,12 @@ function defaultsFactory() {
     baseRadius: 75,
     topRadius: 90,
     wall: 0.8,
-    belly: 20,
+    belly: 20,       // Nice barrel shape by default
     bellyHeight: 0.5,
-    holeDiameter: 80,
+    // holeDiameter removed from defaults, handled internally
 
     texture: first,
-    autoSpin: true,
+    autoSpin: false,
   };
   const tex = textures[first];
   return tex?.defaults ? { ...d, ...tex.defaults } : d;
@@ -206,7 +243,7 @@ function exportSTL(params) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "lampshade_solid_wall_textured.stl";
+    a.download = "lampshade_solid_wall.stl";
     document.body.appendChild(a);
     a.click();
     a.remove();
