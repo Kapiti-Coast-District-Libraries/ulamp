@@ -10,16 +10,20 @@ function apply(geometry, p) {
   if (!pos || !nor) return geometry;
 
   // Parameters
-  const orders = clamp(Math.floor(p.t_quasi_orders ?? 7), 3, 16);   // symmetry spokes
-  const tile   = clamp(p.t_quasi_tile ?? 18, 4, 80);                // mm per wave
-  const depth  = clamp(p.t_quasi_depth ?? 2.5, 0, 3.0);             // outward emboss
-  const sharp  = clamp(Math.floor(p.t_quasi_sharpness ?? 3), 1, 8);  // crest hardness
-  const twistDegPer100 = clamp(p.t_quasi_twist_deg100 ?? 20, -180, 180); // rotation per 100 mm height
-  const warpMM   = clamp(p.t_quasi_warp_mm ?? 1.5, 0, 6);           // coordinate warp in mm
-  const warpScale= clamp(p.t_quasi_warp_scale ?? 24, 4, 120);       // mm wavelength of warp
+  const orders = clamp(Math.floor(p.t_quasi_orders ?? 7), 3, 16);   
+  const tile   = clamp(p.t_quasi_tile ?? 18, 4, 80);                
+  const depth  = clamp(p.t_quasi_depth ?? 2.5, 0, 3.0);             
+  const sharp  = clamp(Math.floor(p.t_quasi_sharpness ?? 3), 1, 8);  
+  const twistDegPer100 = clamp(p.t_quasi_twist_deg100 ?? 20, -180, 180); 
+  
+  const warpMM   = clamp(p.t_quasi_warp_mm ?? 1.5, 0, 6);           
+  const warpScale= clamp(p.t_quasi_warp_scale ?? 24, 4, 120);       
 
   const fadeTop = clamp(p.t_quasi_fadeTop ?? 0.08, 0, 0.5);
   const fadeBottom = clamp(p.t_quasi_fadeBottom ?? 0.05, 0, 0.5);
+  
+  // NEW: Invert logic
+  const invert = !!p.t_quasi_invert;
 
   const k = (2 * Math.PI) / tile;
   const kWarp = (2 * Math.PI) / warpScale;
@@ -46,8 +50,8 @@ function apply(geometry, p) {
     if (r < 1e-6) continue;
     radial.multiplyScalar(1 / r);
 
-    // outward facing only
-    if (n.dot(radial) <= 0.0) continue;
+    // outward facing only (unless your pack allows internal normals, but generally safe to skip)
+    // if (n.dot(radial) <= 0.0) continue; 
 
     // cylindrical coordinates
     let theta = Math.atan2(v.z, v.x); if (theta < 0) theta += Math.PI * 2;
@@ -68,8 +72,14 @@ function apply(geometry, p) {
       const u = Math.cos(ang) * sW + Math.sin(ang) * yW;
       sum += Math.cos(k * u);
     }
-    // normalize to 0..1, then sharpen
-    const val = 0.5 * (sum / orders + 1);
+    
+    // normalize to 0..1
+    let val = 0.5 * (sum / orders + 1);
+    
+    // Apply Invert: flip before sharpening so we get "sharp grooves" vs "sharp ridges"
+    if (invert) val = 1.0 - val;
+
+    // sharpen
     const crest = Math.pow(Math.max(0, val), sharp);
 
     // top and bottom fades, so rims and seating stay cleaner
@@ -82,7 +92,7 @@ function apply(geometry, p) {
     const slack = Math.max(0, maxR - r);
     const push = Math.min(depth, slack) * crest * fade;
 
-    if (push > 0) {
+    if (Math.abs(push) > 1e-5) {
       v.addScaledVector(radial, push);
       pos.setXYZ(i, v.x, v.y, v.z);
     }
@@ -102,22 +112,27 @@ export default {
     t_quasi_depth: 2.5,
     t_quasi_sharpness: 3,
     t_quasi_twist_deg100: 20,
+    t_quasi_invert: false,
     t_quasi_warp_mm: 1.5,
     t_quasi_warp_scale: 24,
     t_quasi_fadeTop: 0.08,
     t_quasi_fadeBottom: 0.05,
   },
   schema: [
-    { key: "t_quasi_orders",      label: "Symmetry spokes",      type: "range", min: 3,  max: 16,  step: 1 },
-    { key: "t_quasi_tile",        label: "Tile size, mm",        type: "range", min: 4,  max: 80,  step: 0.5 },
-    { key: "t_quasi_depth",       label: "Depth, mm",            type: "range", min: 0,  max: 3.0, step: 0.05 },
-    { key: "t_quasi_sharpness",   label: "Sharpness",            type: "range", min: 1,  max: 8,   step: 1 },
-    { key: "t_quasi_twist_deg100",label: "Twist deg per 100 mm", type: "range", min: -180, max: 180, step: 1 },
-    { key: "t_quasi_warp_mm",     label: "Warp amount, mm",      type: "range", min: 0,  max: 6,   step: 0.1 },
-    { key: "t_quasi_warp_scale",  label: "Warp scale, mm",       type: "range", min: 4,  max: 120, step: 0.5 },
-    { key: "t_quasi_fadeTop",     label: "Fade near top",        type: "range", min: 0,  max: 0.5, step: 0.01 },
-    { key: "t_quasi_fadeBottom",  label: "Fade near bottom",     type: "range", min: 0,  max: 0.5, step: 0.01 },
+    // --- PRIMARY TEXTURE CONTROLS ---
+    { key: "t_quasi_orders",      label: "Star Points",          type: "range", min: 3,  max: 12,  step: 1, group: "Texture" },
+    { key: "t_quasi_tile",        label: "Pattern Scale",        type: "range", min: 5,  max: 60,  step: 0.5, group: "Texture" },
+    { key: "t_quasi_depth",       label: "Emboss Depth",         type: "range", min: 0,  max: 3.0, step: 0.1, group: "Texture" },
+    { key: "t_quasi_twist_deg100",label: "Twist Rate",           type: "range", min: -90, max: 90, step: 1, group: "Texture" },
+    { key: "t_quasi_invert",      label: "Invert Pattern",       type: "checkbox", group: "Texture" },
+
+    // --- ADVANCED TEXTURE CONTROLS ---
+    { key: "t_quasi_sharpness",   label: "Edge Sharpness",       type: "range", min: 1,  max: 8,   step: 0.5, group: "Texture", advanced: true },
+    { key: "t_quasi_warp_mm",     label: "Distortion Amount",    type: "range", min: 0,  max: 6,   step: 0.1, group: "Texture", advanced: true },
+    { key: "t_quasi_warp_scale",  label: "Distortion Scale",     type: "range", min: 4,  max: 120, step: 0.5, group: "Texture", advanced: true },
+    { key: "t_quasi_fadeTop",     label: "Fade Top Gap",         type: "range", min: 0,  max: 0.3, step: 0.01, group: "Texture", advanced: true },
+    { key: "t_quasi_fadeBottom",  label: "Fade Bottom Gap",      type: "range", min: 0,  max: 0.3, step: 0.01, group: "Texture", advanced: true },
   ],
-  headroom: (p) => clamp(p.t_quasi_depth ?? 2.5, 0, 3.0), // reserve radial mm so peaks never get swallowed
+  headroom: (p) => clamp(p.t_quasi_depth ?? 2.5, 0, 3.0), // reserve radial mm
   apply,
 };
