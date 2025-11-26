@@ -21,7 +21,6 @@ export const visualBaseConfig = {
   upAxis: "Z", 
   unitScale: 1,
   lockCenterXZTo0: true,
-  lockBaseYTo0: true,
   localOffset: [0, 0, 0], 
   rotationDeg: [0, 0, 0],
   scale: [1, 1, 1],
@@ -36,7 +35,6 @@ export const lightBulbConfig = {
   unitScale: 1,
   
   lockCenterXZTo0: true,
-  lockBaseYTo0: true,
 
   // Raise the bulb up! (e.g., 50mm up from the floor)
   localOffset: [0, 0, 0], 
