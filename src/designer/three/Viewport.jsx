@@ -19,8 +19,8 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
   const autoSpinRef = useRef(autoSpin);
   useEffect(() => { autoSpinRef.current = autoSpin; }, [autoSpin]);
 
-  // Download logic: Exports only the lamp (and optionally the insert if you merged them in memory)
-  // But explicitly EXCLUDES the visual stand.
+  // Download logic: Exports only the lamp. 
+  // Explicitly EXCLUDES the visual stand and the insert from the check file.
   useImperativeHandle(ref, () => ({
     download: () => {
       if (!meshRef.current) return;
@@ -80,52 +80,64 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     scene.add(mesh);
     meshRef.current = mesh;
 
-    // --- Helper to load STLs with config settings ---
+    // --- Helper to load STLs with config settings & LOGGING ---
     const loadPart = (config, material, refStore) => {
       if (!config || !config.include || !config.url) return;
       
+      console.log(`[Viewport] Attempting to load: ${config.url}`); // <--- START LOG
+
       const loader = new STLLoader();
-      loader.load(config.url, (geometry) => {
-        // 1. Unit Scale
-        const us = config.unitScale || 1;
-        if (us !== 1) geometry.scale(us, us, us);
+      loader.load(
+        config.url,
+        (geometry) => {
+          console.log(`[Viewport] SUCCESS loading: ${config.url}`); // <--- SUCCESS LOG
 
-        // 2. Up Axis
-        if (config.upAxis === "Z") geometry.rotateX(-Math.PI / 2);
+          // 1. Unit Scale
+          const us = config.unitScale || 1;
+          if (us !== 1) geometry.scale(us, us, us);
 
-        // 3. Centering
-        geometry.computeBoundingBox();
-        const bbox = geometry.boundingBox;
-        const center = new THREE.Vector3();
-        bbox.getCenter(center);
+          // 2. Up Axis
+          if (config.upAxis === "Z") geometry.rotateX(-Math.PI / 2);
 
-        const tx = config.lockCenterXZTo0 ? -center.x : 0;
-        const ty = config.lockBaseYTo0 ? -bbox.min.y : 0;
-        const tz = config.lockCenterXZTo0 ? -center.z : 0;
-        geometry.translate(tx, ty, tz);
+          // 3. Centering
+          geometry.computeBoundingBox();
+          const bbox = geometry.boundingBox;
+          const center = new THREE.Vector3();
+          bbox.getCenter(center);
 
-        // 4. Transforms
-        if (config.rotationDeg) {
-          const [rx, ry, rz] = config.rotationDeg;
-          geometry.rotateX(rx * Math.PI / 180);
-          geometry.rotateY(ry * Math.PI / 180);
-          geometry.rotateZ(rz * Math.PI / 180);
+          const tx = config.lockCenterXZTo0 ? -center.x : 0;
+          const ty = config.lockBaseYTo0 ? -bbox.min.y : 0;
+          const tz = config.lockCenterXZTo0 ? -center.z : 0;
+          geometry.translate(tx, ty, tz);
+
+          // 4. Transforms
+          if (config.rotationDeg) {
+            const [rx, ry, rz] = config.rotationDeg;
+            geometry.rotateX(rx * Math.PI / 180);
+            geometry.rotateY(ry * Math.PI / 180);
+            geometry.rotateZ(rz * Math.PI / 180);
+          }
+          if (config.scale) {
+            const [sx, sy, sz] = config.scale;
+            geometry.scale(sx, sy, sz);
+          }
+          if (config.localOffset) {
+            const [lx, ly, lz] = config.localOffset;
+            geometry.translate(lx, ly, lz);
+          }
+
+          const partMesh = new THREE.Mesh(geometry, material);
+          if (config.position) partMesh.position.set(...config.position);
+          
+          scene.add(partMesh);
+          if (refStore) refStore.current = partMesh;
+        },
+        undefined, // onProgress
+        (error) => {
+          // <--- ERROR LOG
+          console.error(`[Viewport] ERROR loading ${config.url}:`, error);
         }
-        if (config.scale) {
-          const [sx, sy, sz] = config.scale;
-          geometry.scale(sx, sy, sz);
-        }
-        if (config.localOffset) {
-          const [lx, ly, lz] = config.localOffset;
-          geometry.translate(lx, ly, lz);
-        }
-
-        const partMesh = new THREE.Mesh(geometry, material);
-        if (config.position) partMesh.position.set(...config.position);
-        
-        scene.add(partMesh);
-        if (refStore) refStore.current = partMesh;
-      });
+      );
     };
 
     // --- 2. Load Base Insert (Dark Grey) ---
@@ -163,11 +175,11 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     window.addEventListener("resize", onResize);
 
     const tick = () => {
-      // Spin the lamp AND the insert (thread), but NOT the stand (usually stands don't spin)
+      // Spin the lamp AND the insert (thread), but NOT the stand
       if (autoSpinRef.current) {
         if (meshRef.current) meshRef.current.rotation.y += 0.003;
         if (insertRef.current) insertRef.current.rotation.y += 0.003;
-        // standRef.current.rotation.y += 0.003; // Uncomment if the stand should spin too
+        // standRef.current.rotation.y += 0.003; 
       }
       controls.update();
       renderer.render(scene, camera);
