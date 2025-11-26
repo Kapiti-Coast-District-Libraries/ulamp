@@ -48,7 +48,8 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
   useEffect(() => {
     const mount = mountRef.current;
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#05070a"); // Very dark background to see the light
+    // 1. BACK TO ORIGINAL LIGHTER BACKGROUND
+    scene.background = new THREE.Color("#12161f");
 
     const w = mount.clientWidth || 800;
     const h = mount.clientHeight || 600;
@@ -60,42 +61,44 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(w, h);
     
-    // 1. ENABLE SHADOWS
+    // Enable Shadows for depth
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     
     mount.appendChild(renderer.domElement);
 
-    // --- Ambient / Room Lights ---
-    // Make these DIM so the bulb is the star
-    const hemi = new THREE.HemisphereLight(0xffffff, 0x222233, 0.2); 
+    // --- 2. BRIGHTER STANDARD LIGHTING ---
+    // Good ambient visibility
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x222233, 0.6); 
     scene.add(hemi);
     
-    // Dim Directional Light (Moonlight)
-    const key = new THREE.DirectionalLight(0xffffff, 0.1);
+    // Strong Key Light (Sun)
+    const key = new THREE.DirectionalLight(0xffffff, 1.0);
     key.position.set(50, 100, 50);
-    // key.castShadow = true; // Disable sun shadow to focus on bulb shadow
+    key.castShadow = true; 
+    key.shadow.mapSize.width = 1024;
+    key.shadow.mapSize.height = 1024;
     scene.add(key);
 
-    const rim = new THREE.DirectionalLight(0xffffff, 0.2); 
+    const rim = new THREE.DirectionalLight(0xffffff, 0.5); 
     rim.position.set(-50, 50, -50);
     scene.add(rim);
 
     // --- Ground ---
-    // A dark floor to catch the light pool
+    // 3. LIGHTER FLOOR to contrast with Black Base
     const floorGeo = new THREE.PlaneGeometry(2000, 2000);
     const floorMat = new THREE.MeshStandardMaterial({ 
-      color: 0x111111,
+      color: 0x252a33, // Lighter grey, not black
       roughness: 0.8,
-      metalness: 0.2
+      metalness: 0.1
     });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -0.1;
-    floor.receiveShadow = true; // IMPORTANT: Catches the light
+    floor.receiveShadow = true;
     scene.add(floor);
 
-    const grid = new THREE.GridHelper(600, 20, 0x333333, 0x222222);
+    const grid = new THREE.GridHelper(600, 20, 0x3a404d, 0x2a2f3a);
     grid.position.y = 0.1;
     scene.add(grid);
 
@@ -105,11 +108,11 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
       color: new THREE.Color(color),
       roughness: 0.75,
       metalness: 0.05,
-      side: THREE.DoubleSide // Light hits inside walls
+      side: THREE.DoubleSide
     });
     const mesh = new THREE.Mesh(geom, mat);
-    mesh.castShadow = true;    // Casts shadow on floor
-    mesh.receiveShadow = true; // Receives shadow from itself
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     scene.add(mesh);
     meshRef.current = mesh;
 
@@ -173,35 +176,31 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     });
     loadPart(hiddenPartConfig, insertMat, insertRef);
 
-    // --- 3. Visual Stand ---
+    // --- 3. Visual Stand (Black) ---
     const standMat = new THREE.MeshStandardMaterial({
-      color: 0x111111, 
-      roughness: 0.5,
-      metalness: 0.2
+      color: 0x111111, // Pure Black
+      roughness: 0.4,  // Slightly shinier
+      metalness: 0.3
     });
     loadPart(visualBaseConfig, standMat, standRef);
 
-    // --- 4. Light Bulb (SUPER BRIGHT) ---
+    // --- 4. Light Bulb ---
     const bulbMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       emissive: new THREE.Color(lightBulbConfig.lightColor || "#ffaa00"),
-      emissiveIntensity: 10.0, // Blinding white hot mesh
+      emissiveIntensity: 2.0, 
       roughness: 0.1
     });
 
     loadPart(lightBulbConfig, bulbMat, bulbRef, (partMesh) => {
-      // THE REAL LIGHT SOURCE
+      // Add the warmth, but rely on scene lights for main visibility
       const pointLight = new THREE.PointLight(
         lightBulbConfig.lightColor || "#ffaa00",
-        lightBulbConfig.lightIntensity || 300, // Very Bright
-        lightBulbConfig.lightDistance || 800 
+        50, // Moderate glow
+        400 
       );
-      
       pointLight.castShadow = true; 
       pointLight.shadow.bias = -0.0005;
-      pointLight.shadow.mapSize.width = 1024;
-      pointLight.shadow.mapSize.height = 1024;
-      
       partMesh.add(pointLight);
     });
 
