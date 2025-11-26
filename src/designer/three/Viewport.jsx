@@ -87,7 +87,7 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     // Invisible plane that still catches shadows
     const floorGeo = new THREE.PlaneGeometry(2000, 2000);
     const floorMat = new THREE.ShadowMaterial({ 
-      opacity: 0.2 // Opacity of the SHADOW, not the floor
+      opacity: 0 // Opacity of the SHADOW, not the floor
     });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
