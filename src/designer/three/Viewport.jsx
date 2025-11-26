@@ -1,30 +1,59 @@
 // src/designer/three/Viewport.jsx
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import * as THREE from "three";
-import { OrbitControls, STLLoader } from "three-stdlib";
-// Import the config to place the base exactly as it is in the export
-import { hiddenPartConfig } from "../../hiddenPart/config.js";
+import { OrbitControls, STLLoader, STLExporter } from "three-stdlib";
+import { hiddenPartConfig, visualBaseConfig } from "../../hiddenPart/config.js";
 
-export default function Viewport({ builder, params, color = "#dddddd", autoSpin = false }) {
+const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = false }, ref) => {
   const mountRef = useRef(null);
-  const meshRef = useRef(null);
+  
+  // Refs for the different parts
+  const meshRef = useRef(null);      // 1. Main Lamp
+  const insertRef = useRef(null);    // 2. Thread (Matches Lamp Color)
+  const standRef = useRef(null);     // 3. Stand (Black)
+  
   const rendererRef = useRef(null);
   const sceneRef = useRef(null);
   const cameraRef = useRef(null);
-  const controlsRef = useRef(null);
   const animRef = useRef(0);
+  const controlsRef = useRef(null);
 
   const autoSpinRef = useRef(autoSpin);
-  
-  useEffect(() => {
-    autoSpinRef.current = autoSpin;
-  }, [autoSpin]);
+  useEffect(() => { autoSpinRef.current = autoSpin; }, [autoSpin]);
 
-  // init once
+  // Download logic: Exports Lamp + Thread (Insert), ignores Stand
+  useImperativeHandle(ref, () => ({
+    download: () => {
+      const exporter = new STLExporter();
+      const exportGroup = new THREE.Group();
+
+      // 1. Add Lampshade
+      if (meshRef.current) {
+        exportGroup.add(meshRef.current.clone());
+      }
+
+      // 2. Add Base Insert (Thread)
+      if (insertRef.current) {
+        exportGroup.add(insertRef.current.clone());
+      }
+
+      if (exportGroup.children.length === 0) {
+        alert("Nothing to export!");
+        return;
+      }
+
+      const str = exporter.parse(exportGroup, { binary: true });
+      const blob = new Blob([str], { type: 'application/octet-stream' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'lampshade_check.stl';
+      link.click();
+    }
+  }));
+
   useEffect(() => {
     const mount = mountRef.current;
     const scene = new THREE.Scene();
-    // Use the dark blue-grey background
     scene.background = new THREE.Color("#12161f");
 
     const w = mount.clientWidth || 800;
@@ -38,7 +67,7 @@ export default function Viewport({ builder, params, color = "#dddddd", autoSpin 
     renderer.setSize(w, h);
     mount.appendChild(renderer.domElement);
 
-    // --- Lighting ---
+    // --- Lights ---
     const hemi = new THREE.HemisphereLight(0xffffff, 0x222233, 0.65);
     scene.add(hemi);
     const key = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -48,7 +77,7 @@ export default function Viewport({ builder, params, color = "#dddddd", autoSpin 
     rim.position.set(-3, 3, -2);
     scene.add(rim);
 
-    // --- Ground & Helpers ---
+    // --- Ground ---
     const grid = new THREE.GridHelper(600, 20, 0x2a2f3a, 0x1b202a);
     grid.position.y = 0;
     scene.add(grid);
@@ -56,7 +85,7 @@ export default function Viewport({ builder, params, color = "#dddddd", autoSpin 
     const axes = new THREE.AxesHelper(50);
     scene.add(axes);
 
-    // --- 1. Main Lamp Mesh (The user's design) ---
+    // --- 1. Main Parametric Mesh ---
     const geom = builder(params);
     const mat = new THREE.MeshStandardMaterial({
       color: new THREE.Color(color),
@@ -64,78 +93,85 @@ export default function Viewport({ builder, params, color = "#dddddd", autoSpin 
       metalness: 0.05
     });
     const mesh = new THREE.Mesh(geom, mat);
-    mesh.castShadow = false;
-    mesh.receiveShadow = false;
     scene.add(mesh);
+    meshRef.current = mesh;
 
-    // --- 2. Hidden Part (The Base Insert) ---
-    // We check if it is enabled in the config
-    if (hiddenPartConfig && hiddenPartConfig.include && hiddenPartConfig.url) {
+    // --- Helper to load STLs ---
+    const loadPart = (config, material, refStore) => {
+      if (!config || !config.include || !config.url) return;
+      
+      console.log(`[Viewport] Loading: ${config.url}`); 
+
       const loader = new STLLoader();
-      loader.load(hiddenPartConfig.url, (geometry) => {
-        
-        // --- Apply Config Logic (Mirrors the export logic) ---
-        
-        // A. Unit Scale (e.g. converting inches to mm)
-        const us = hiddenPartConfig.unitScale || 1;
-        if (us !== 1) geometry.scale(us, us, us);
+      loader.load(
+        config.url,
+        (geometry) => {
+          // 1. Unit Scale
+          const us = config.unitScale || 1;
+          if (us !== 1) geometry.scale(us, us, us);
 
-        // B. Up Axis correction (Z-up from CAD to Y-up for Three.js)
-        if (hiddenPartConfig.upAxis === "Z") {
-          geometry.rotateX(-Math.PI / 2);
+          // 2. Up Axis
+          if (config.upAxis === "Z") geometry.rotateX(-Math.PI / 2);
+
+          // 3. Centering
+          geometry.computeBoundingBox();
+          const bbox = geometry.boundingBox;
+          const center = new THREE.Vector3();
+          bbox.getCenter(center);
+
+          const tx = config.lockCenterXZTo0 ? -center.x : 0;
+          const ty = config.lockBaseYTo0 ? -bbox.min.y : 0;
+          const tz = config.lockCenterXZTo0 ? -center.z : 0;
+          geometry.translate(tx, ty, tz);
+
+          // 4. Transforms
+          if (config.rotationDeg) {
+            const [rx, ry, rz] = config.rotationDeg;
+            geometry.rotateX(rx * Math.PI / 180);
+            geometry.rotateY(ry * Math.PI / 180);
+            geometry.rotateZ(rz * Math.PI / 180);
+          }
+          if (config.scale) {
+            const [sx, sy, sz] = config.scale;
+            geometry.scale(sx, sy, sz);
+          }
+          if (config.localOffset) {
+            const [lx, ly, lz] = config.localOffset;
+            geometry.translate(lx, ly, lz);
+          }
+
+          const partMesh = new THREE.Mesh(geometry, material);
+          if (config.position) partMesh.position.set(...config.position);
+          
+          scene.add(partMesh);
+          if (refStore) refStore.current = partMesh;
+        },
+        undefined, 
+        (error) => {
+          console.error(`[Viewport] ERROR loading ${config.url}:`, error);
         }
+      );
+    };
 
-        // C. Centering Logic
-        geometry.computeBoundingBox();
-        const bbox = geometry.boundingBox;
-        const center = new THREE.Vector3(); 
-        bbox.getCenter(center);
+    // --- 2. Load Base Insert (Thread) ---
+    // Matches the lamp color/material
+    const insertMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(color), // Start with current color
+      roughness: 0.75,
+      metalness: 0.05
+    });
+    loadPart(hiddenPartConfig, insertMat, insertRef);
 
-        // Calculate shifts to lock the base to the origin/floor
-        const tx = hiddenPartConfig.lockCenterXZTo0 ? -center.x : 0;
-        const ty = hiddenPartConfig.lockBaseYTo0 ? -bbox.min.y : 0;
-        const tz = hiddenPartConfig.lockCenterXZTo0 ? -center.z : 0;
-        geometry.translate(tx, ty, tz);
+    // --- 3. Load Visual Stand (Black) ---
+    const standMat = new THREE.MeshStandardMaterial({
+      color: 0x111111, // BLACK
+      roughness: 0.5,
+      metalness: 0.2
+    });
+    loadPart(visualBaseConfig, standMat, standRef);
 
-        // D. Manual Rotation
-        if (hiddenPartConfig.rotationDeg) {
-          const [rx, ry, rz] = hiddenPartConfig.rotationDeg;
-          geometry.rotateX(rx * Math.PI / 180);
-          geometry.rotateY(ry * Math.PI / 180);
-          geometry.rotateZ(rz * Math.PI / 180);
-        }
 
-        // E. Manual Scale
-        if (hiddenPartConfig.scale) {
-          const [sx, sy, sz] = hiddenPartConfig.scale;
-          geometry.scale(sx, sy, sz);
-        }
-
-        // F. Manual Offset
-        if (hiddenPartConfig.localOffset) {
-          const [lx, ly, lz] = hiddenPartConfig.localOffset;
-          geometry.translate(lx, ly, lz);
-        }
-
-        // --- Create Base Mesh ---
-        // We use a dark, slightly metallic material to contrast with the lamp
-        const baseMat = new THREE.MeshStandardMaterial({
-          color: 0x333333,
-          roughness: 0.5,
-          metalness: 0.3
-        });
-        const baseMesh = new THREE.Mesh(geometry, baseMat);
-        
-        // Final position (usually 0,0,0)
-        if (hiddenPartConfig.position) {
-          baseMesh.position.set(...hiddenPartConfig.position);
-        }
-
-        scene.add(baseMesh);
-      });
-    }
-
-    // --- Controls & Loop ---
+    // --- Controls ---
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
@@ -153,8 +189,10 @@ export default function Viewport({ builder, params, color = "#dddddd", autoSpin 
     window.addEventListener("resize", onResize);
 
     const tick = () => {
-      if (autoSpinRef.current && mesh) {
-        mesh.rotation.y += 0.003;
+      // Spin Shade + Insert
+      if (autoSpinRef.current) {
+        if (meshRef.current) meshRef.current.rotation.y += 0.003;
+        if (insertRef.current) insertRef.current.rotation.y += 0.003;
       }
       controls.update();
       renderer.render(scene, camera);
@@ -162,31 +200,18 @@ export default function Viewport({ builder, params, color = "#dddddd", autoSpin 
     };
     tick();
 
-    meshRef.current = mesh;
-    rendererRef.current = renderer;
-    sceneRef.current = scene;
-    cameraRef.current = camera;
-    controlsRef.current = controls;
-
     return () => {
       cancelAnimationFrame(animRef.current);
       window.removeEventListener("resize", onResize);
       controls.dispose();
-      scene.traverse(o => {
-        if (o.isMesh) {
-          o.geometry.dispose();
-          if (o.material && o.material.dispose) o.material.dispose();
-        }
-      });
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) {
         mount.removeChild(renderer.domElement);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); 
+  }, []);
 
-  // Rebuild main geometry when params change
+  // Update Geometry
   useEffect(() => {
     if (!meshRef.current) return;
     const geom = builder(params);
@@ -195,15 +220,24 @@ export default function Viewport({ builder, params, color = "#dddddd", autoSpin 
     if (old) old.dispose();
   }, [builder, params]);
 
-  // Update main color
+  // Update Color (Sync Lamp AND Insert)
   useEffect(() => {
-    if (!meshRef.current) return;
-    const mat = meshRef.current.material;
-    if (mat && mat.color) {
-      mat.color.set(color);
-      mat.needsUpdate = true;
+    const c = new THREE.Color(color);
+
+    // 1. Update Lamp
+    if (meshRef.current && meshRef.current.material) {
+      meshRef.current.material.color.set(c);
+      meshRef.current.material.needsUpdate = true;
+    }
+
+    // 2. Update Insert (Thread)
+    if (insertRef.current && insertRef.current.material) {
+      insertRef.current.material.color.set(c);
+      insertRef.current.material.needsUpdate = true;
     }
   }, [color]);
 
   return <div ref={mountRef} style={{ width: "100%", height: "100%" }} />;
-}
+});
+
+export default Viewport;
