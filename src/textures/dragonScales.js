@@ -95,7 +95,7 @@ function apply(geometry, p) {
   const scale  = clamp(p.t_crys_scale ?? 30, 5, 100);
   const depth  = clamp(p.t_crys_depth ?? 3.0, 0, 8.0);
   const chaos  = clamp(p.t_crys_chaos ?? 0.5, 0, 2.0); // Domain Warp
-  const sharp  = clamp(p.t_crys_sharp ?? 1.0, 0.1, 3.0); // Profile curve
+  const sharp  = clamp(p.t_crys_sharp ?? 1.0, 0.1, 1.4); // Profile curve
   const invert = p.t_crys_invert ? -1 : 1; // Peaks vs Craters
   
   const freq = 1.0 / scale;
