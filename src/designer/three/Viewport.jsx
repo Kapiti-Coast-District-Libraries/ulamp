@@ -48,7 +48,7 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
   useEffect(() => {
     const mount = mountRef.current;
     const scene = new THREE.Scene();
-    // 1. BACK TO ORIGINAL LIGHTER BACKGROUND
+    // Background color
     scene.background = new THREE.Color("#12161f");
 
     const w = mount.clientWidth || 800;
@@ -61,18 +61,16 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(w, h);
     
-    // Enable Shadows for depth
+    // Enable Shadows
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     
     mount.appendChild(renderer.domElement);
 
-    // --- 2. BRIGHTER STANDARD LIGHTING ---
-    // Good ambient visibility
+    // --- Lights ---
     const hemi = new THREE.HemisphereLight(0xffffff, 0x222233, 0.6); 
     scene.add(hemi);
     
-    // Strong Key Light (Sun)
     const key = new THREE.DirectionalLight(0xffffff, 1.0);
     key.position.set(50, 100, 50);
     key.castShadow = true; 
@@ -85,12 +83,11 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     scene.add(rim);
 
     // --- Ground ---
-    // 3. LIGHTER FLOOR to contrast with Black Base
+    // TRANSPARENT FLOOR (ShadowMaterial)
+    // Invisible plane that still catches shadows
     const floorGeo = new THREE.PlaneGeometry(2000, 2000);
-    const floorMat = new THREE.MeshStandardMaterial({ 
-      color: 0x252a33, // Lighter grey, not black
-      roughness: 0.8,
-      metalness: 0.1
+    const floorMat = new THREE.ShadowMaterial({ 
+      opacity: 0.2 // Opacity of the SHADOW, not the floor
     });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
@@ -176,10 +173,10 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     });
     loadPart(hiddenPartConfig, insertMat, insertRef);
 
-    // --- 3. Visual Stand (Black) ---
+    // --- 3. Visual Stand ---
     const standMat = new THREE.MeshStandardMaterial({
-      color: 0x111111, // Pure Black
-      roughness: 0.4,  // Slightly shinier
+      color: 0x111111, // Black Stand
+      roughness: 0.4,
       metalness: 0.3
     });
     loadPart(visualBaseConfig, standMat, standRef);
@@ -193,10 +190,9 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     });
 
     loadPart(lightBulbConfig, bulbMat, bulbRef, (partMesh) => {
-      // Add the warmth, but rely on scene lights for main visibility
       const pointLight = new THREE.PointLight(
         lightBulbConfig.lightColor || "#ffaa00",
-        50, // Moderate glow
+        50, 
         400 
       );
       pointLight.castShadow = true; 
