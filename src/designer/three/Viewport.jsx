@@ -2,15 +2,17 @@
 import React, { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import * as THREE from "three";
 import { OrbitControls, STLLoader, STLExporter } from "three-stdlib";
-import { hiddenPartConfig, visualBaseConfig } from "../../hiddenPart/config.js";
+// Import ALL configs
+import { hiddenPartConfig, visualBaseConfig, lightBulbConfig } from "../../hiddenPart/config.js";
 
 const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = false }, ref) => {
   const mountRef = useRef(null);
   
   // Refs for the different parts
-  const meshRef = useRef(null);      // 1. Main Lamp
-  const insertRef = useRef(null);    // 2. Thread (Matches Lamp Color)
-  const standRef = useRef(null);     // 3. Stand (Black)
+  const meshRef = useRef(null);      // 1. Lamp (Exported)
+  const insertRef = useRef(null);    // 2. Insert (Exported)
+  const standRef = useRef(null);     // 3. Stand (Visual)
+  const bulbRef = useRef(null);      // 4. Bulb (Visual + Light)
   
   const rendererRef = useRef(null);
   const sceneRef = useRef(null);
@@ -21,21 +23,14 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
   const autoSpinRef = useRef(autoSpin);
   useEffect(() => { autoSpinRef.current = autoSpin; }, [autoSpin]);
 
-  // Download logic: Exports Lamp + Thread (Insert), ignores Stand
+  // Download logic: Exports Lamp + Insert. Ignores Stand + Bulb.
   useImperativeHandle(ref, () => ({
     download: () => {
       const exporter = new STLExporter();
       const exportGroup = new THREE.Group();
 
-      // 1. Add Lampshade
-      if (meshRef.current) {
-        exportGroup.add(meshRef.current.clone());
-      }
-
-      // 2. Add Base Insert (Thread)
-      if (insertRef.current) {
-        exportGroup.add(insertRef.current.clone());
-      }
+      if (meshRef.current) exportGroup.add(meshRef.current.clone());
+      if (insertRef.current) exportGroup.add(insertRef.current.clone());
 
       if (exportGroup.children.length === 0) {
         alert("Nothing to export!");
@@ -67,7 +62,7 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     renderer.setSize(w, h);
     mount.appendChild(renderer.domElement);
 
-    // --- Lights ---
+    // --- Standard Scene Lights ---
     const hemi = new THREE.HemisphereLight(0xffffff, 0x222233, 0.65);
     scene.add(hemi);
     const key = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -81,7 +76,6 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     const grid = new THREE.GridHelper(600, 20, 0x2a2f3a, 0x1b202a);
     grid.position.y = 0;
     scene.add(grid);
-
     const axes = new THREE.AxesHelper(50);
     scene.add(axes);
 
@@ -93,11 +87,13 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
       metalness: 0.05
     });
     const mesh = new THREE.Mesh(geom, mat);
+    // Enable double side so the internal light hits the inside walls
+    mesh.material.side = THREE.DoubleSide; 
     scene.add(mesh);
     meshRef.current = mesh;
 
     // --- Helper to load STLs ---
-    const loadPart = (config, material, refStore) => {
+    const loadPart = (config, material, refStore, onLoaded) => {
       if (!config || !config.include || !config.url) return;
       
       console.log(`[Viewport] Loading: ${config.url}`); 
@@ -145,31 +141,47 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
           
           scene.add(partMesh);
           if (refStore) refStore.current = partMesh;
+          if (onLoaded) onLoaded(partMesh); // Callback for extra logic
         },
         undefined, 
-        (error) => {
-          console.error(`[Viewport] ERROR loading ${config.url}:`, error);
-        }
+        (error) => { console.error(`[Viewport] ERROR loading ${config.url}:`, error); }
       );
     };
 
-    // --- 2. Load Base Insert (Thread) ---
-    // Matches the lamp color/material
+    // --- 2. Base Insert (Thread) ---
     const insertMat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(color), // Start with current color
+      color: new THREE.Color(color), 
       roughness: 0.75,
       metalness: 0.05
     });
     loadPart(hiddenPartConfig, insertMat, insertRef);
 
-    // --- 3. Load Visual Stand (Black) ---
+    // --- 3. Visual Stand (Black) ---
     const standMat = new THREE.MeshStandardMaterial({
-      color: 0x111111, // BLACK
+      color: 0x111111, 
       roughness: 0.5,
       metalness: 0.2
     });
     loadPart(visualBaseConfig, standMat, standRef);
 
+    // --- 4. Light Bulb (Glowing + Emits Light) ---
+    const bulbMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      emissive: new THREE.Color(lightBulbConfig.lightColor || "#ffaa00"),
+      emissiveIntensity: 2.0, // Make the mesh itself look bright
+      roughness: 0.1
+    });
+
+    loadPart(lightBulbConfig, bulbMat, bulbRef, (partMesh) => {
+      // Create the actual light source
+      const pointLight = new THREE.PointLight(
+        lightBulbConfig.lightColor || "#ffaa00",
+        lightBulbConfig.lightIntensity || 1, 
+        lightBulbConfig.lightDistance || 0
+      );
+      // Move light slightly to center of bulb if needed, but mesh center is usually fine
+      partMesh.add(pointLight);
+    });
 
     // --- Controls ---
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -189,7 +201,7 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     window.addEventListener("resize", onResize);
 
     const tick = () => {
-      // Spin Shade + Insert
+      // Spin Shade + Insert. Stand and Bulb usually stay static.
       if (autoSpinRef.current) {
         if (meshRef.current) meshRef.current.rotation.y += 0.003;
         if (insertRef.current) insertRef.current.rotation.y += 0.003;
@@ -220,17 +232,13 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     if (old) old.dispose();
   }, [builder, params]);
 
-  // Update Color (Sync Lamp AND Insert)
+  // Update Color
   useEffect(() => {
     const c = new THREE.Color(color);
-
-    // 1. Update Lamp
     if (meshRef.current && meshRef.current.material) {
       meshRef.current.material.color.set(c);
       meshRef.current.material.needsUpdate = true;
     }
-
-    // 2. Update Insert (Thread)
     if (insertRef.current && insertRef.current.material) {
       insertRef.current.material.color.set(c);
       insertRef.current.material.needsUpdate = true;
