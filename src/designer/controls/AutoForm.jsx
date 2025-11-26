@@ -1,26 +1,45 @@
 // src/designer/controls/AutoForm.jsx
 import React, { useState, useMemo } from "react";
 
+// NEW: Horizontal swipeable list for textures
+function TextureSwiper({ options, value, onChange }) {
+  return (
+    <div className="texture-swiper-container">
+      <div className="texture-swiper">
+        {options.map((opt) => {
+          const isSelected = value === opt.value;
+          return (
+            <button
+              key={opt.value}
+              className={`texture-card ${isSelected ? "selected" : ""}`}
+              onClick={() => onChange(opt.value)}
+              title={opt.label}
+            >
+              {/* You could add an icon/image here later */}
+              <div className="texture-name">{opt.label}</div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function FormSection({ title, fields, params, setParams }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
-  // Filter visible fields based on advanced toggle
   const visibleFields = fields.filter((f) => !f.advanced || showAdvanced);
   const hasAdvanced = fields.some((f) => f.advanced);
 
   const set = (key, value) => setParams((prev) => ({ ...prev, [key]: value }));
 
   const handleRandomize = () => {
-    // We need to construct the *next* params based on the current ones
-    // but only updating the keys belonging to THIS section.
     setParams((prev) => {
       const next = { ...prev };
       
       fields.forEach((f) => {
-        // 1. Never randomize the texture selector itself (user should pick that)
         if (f.key === "texture") return;
 
-        // 2. Determine value
         if (f.type === "range" || f.type === "number") {
           const min = Number.isFinite(f.min) ? f.min : 0;
           const max = Number.isFinite(f.max) ? f.max : 1;
@@ -48,6 +67,22 @@ function FormSection({ title, fields, params, setParams }) {
       {title && <div className="section-title">{title}</div>}
       
       {visibleFields.map((f) => {
+        // SPECIAL CASE: Texture field gets the swiper UI
+        if (f.type === "select" && f.key === "texture") {
+          const value = params[f.key] ?? f.options?.[0]?.value ?? "";
+          return (
+            <div className="field" key={f.key}>
+              <label>{f.label}</label>
+              <TextureSwiper 
+                options={f.options || []} 
+                value={value} 
+                onChange={(v) => set(f.key, v)} 
+              />
+            </div>
+          );
+        }
+
+        // Regular Select
         if (f.type === "select") {
           const value = params[f.key] ?? f.options?.[0]?.value ?? "";
           return (
@@ -61,6 +96,7 @@ function FormSection({ title, fields, params, setParams }) {
             </div>
           );
         }
+
         if (f.type === "checkbox") {
           const value = !!params[f.key];
           return (
@@ -74,7 +110,7 @@ function FormSection({ title, fields, params, setParams }) {
             </div>
           );
         }
-        // Range / Number
+
         const value = typeof params[f.key] === "number" ? params[f.key] : (f.min ?? 0);
         return (
           <div className="field" key={f.key}>
@@ -112,7 +148,6 @@ function FormSection({ title, fields, params, setParams }) {
 export default function AutoForm({ schema, params, setParams }) {
   const effective = typeof schema === "function" ? schema(params) : schema;
 
-  // Group fields by their 'group' property. Default to "General" if missing.
   const grouped = useMemo(() => {
     const groups = {};
     const order = [];
