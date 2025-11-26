@@ -1,29 +1,6 @@
 // src/designer/controls/AutoForm.jsx
 import React, { useState, useMemo } from "react";
-
-// NEW: Horizontal swipeable list for textures
-function TextureSwiper({ options, value, onChange }) {
-  return (
-    <div className="texture-swiper-container">
-      <div className="texture-swiper">
-        {options.map((opt) => {
-          const isSelected = value === opt.value;
-          return (
-            <button
-              key={opt.value}
-              className={`texture-card ${isSelected ? "selected" : ""}`}
-              onClick={() => onChange(opt.value)}
-              title={opt.label}
-            >
-              {/* You could add an icon/image here later */}
-              <div className="texture-name">{opt.label}</div>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
+import Swiper from "./Swiper.jsx"; // <--- IMPORT THIS
 
 function FormSection({ title, fields, params, setParams }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -67,13 +44,14 @@ function FormSection({ title, fields, params, setParams }) {
       {title && <div className="section-title">{title}</div>}
       
       {visibleFields.map((f) => {
-        // SPECIAL CASE: Texture field gets the swiper UI
+        // SPECIAL CASE: Texture field gets the Swiper UI
         if (f.type === "select" && f.key === "texture") {
           const value = params[f.key] ?? f.options?.[0]?.value ?? "";
           return (
             <div className="field" key={f.key}>
               <label>{f.label}</label>
-              <TextureSwiper 
+              {/* Reuse Swiper component */}
+              <Swiper 
                 options={f.options || []} 
                 value={value} 
                 onChange={(v) => set(f.key, v)} 
