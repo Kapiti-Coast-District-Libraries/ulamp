@@ -27,7 +27,7 @@ export const visualBaseConfig = {
   
   // You might want to lower this if the lamp sits ON TOP of it
   // or raise it if the lamp sits AROUND it.
-  localOffset: [0, -20, 0], 
+  localOffset: [0, 0, 0], 
   
   rotationDeg: [0, 0, 0],
   scale: [1, 1, 1],
