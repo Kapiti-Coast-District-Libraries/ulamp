@@ -181,7 +181,7 @@ export default {
     { key: "t_crys_depth",  label: "Facet Depth",     type: "range", min: 0,  max: 8.0, step: 0.1, group: "Texture" },
     { key: "t_crys_chaos",  label: "Randomness",      type: "range", min: 0,  max: 2.0, step: 0.1, group: "Texture" },
     
-    { key: "t_crys_sharp",  label: "Edge Sharpness",  type: "range", min: 0.5,max: 3.0, step: 0.1, group: "Texture", advanced: true },
+    { key: "t_crys_sharp",  label: "Edge Sharpness",  type: "range", min: 0.5,max: 1.4, step: 0.1, group: "Texture", advanced: true },
     { key: "t_crys_invert", label: "Invert (Craters)",type: "checkbox", group: "Texture", advanced: true },
   ],
   headroom: (p) => clamp(p.t_crys_depth ?? 4.0, 0, 8.0),
