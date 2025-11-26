@@ -115,6 +115,10 @@ export default function Designer() {
   }, [model]);
 
   const [params, setParams] = React.useState(computeDefaults);
+  
+  // PERFORMANCE FIX: deferredParams lags behind slightly to keep UI responsive
+  const deferredParams = React.useDeferredValue(params);
+
   const [uploadMsg, setUploadMsg] = React.useState("");
 
   // color
@@ -394,7 +398,7 @@ export default function Designer() {
         </aside>
 
         <section className="viewport">
-          <Viewport builder={model.build} params={params} color={colorHex} autoSpin={params.autoSpin} />
+          <Viewport builder={model.build} params={deferredParams} color={colorHex} autoSpin={params.autoSpin} />
         </section>
       </main>
 
