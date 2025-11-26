@@ -6,7 +6,7 @@ export const hiddenPartConfig = {
   include: true,
 
   // Place your file at public/hidden/base_insert.stl
-  url: "/hidden/base_insert2.stl",
+  url: "/hidden/base_insert.stl",
 
   // Up axis coming from Onshape
   // "Z" means we will rotate to Y up for Three
