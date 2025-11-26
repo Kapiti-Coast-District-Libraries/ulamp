@@ -3,10 +3,17 @@ import React from "react";
 import * as THREE from "three";
 import { packs } from "../packs";
 import { palette } from "../colors/palette.js";
-import { hiddenPartConfig } from "../hiddenPart/config.js"; // kept in case you switch back
+import { hiddenPartConfig } from "../hiddenPart/config.js";
 import AutoForm from "./controls/AutoForm.jsx";
 import Viewport from "./three/Viewport.jsx";
+import Swiper from "./controls/Swiper.jsx"; // <--- IMPORT THIS
 
+// ... (Keep your UploadModal, Step, IntroModal, PreparingModal as they were) ...
+// ... OR copy them from previous response if you need the full file again ...
+
+// (To save space, I will focus on the Designer component logic changes)
+
+/* ... Insert Modals here ... */
 // simple success modal reused for logging flow
 function UploadModal({ open, stage, percent, message, onCancel, canCancel }) {
   if (!open) return null;
@@ -115,6 +122,10 @@ export default function Designer() {
   }, [model]);
 
   const [params, setParams] = React.useState(computeDefaults);
+  
+  // PERFORMANCE FIX: deferredParams lags behind slightly to keep UI responsive
+  const deferredParams = React.useDeferredValue(params);
+
   const [uploadMsg, setUploadMsg] = React.useState("");
 
   // color
@@ -357,6 +368,9 @@ export default function Designer() {
     setColorName(item?.name || "Color");
   };
 
+  // Convert packKeys to options format for Swiper
+  const packOptions = packKeys.map(k => ({ label: packs[k].label, value: k }));
+
   return (
     <div className="app">
       <header className="topbar">
@@ -372,11 +386,12 @@ export default function Designer() {
         <aside className="panel">
           <div className="field">
             <label>Pack</label>
-            <select value={safePackKey} onChange={(e) => setPackKey(e.target.value)}>
-              {packKeys.map((k) => (
-                <option key={k} value={k}>{packs[k].label}</option>
-              ))}
-            </select>
+            {/* NEW: Replaced Select with Swiper */}
+            <Swiper 
+              options={packOptions} 
+              value={safePackKey} 
+              onChange={setPackKey} 
+            />
           </div>
 
           <div className="field">
@@ -394,7 +409,7 @@ export default function Designer() {
         </aside>
 
         <section className="viewport">
-          <Viewport builder={model.build} params={params} color={colorHex} autoSpin={params.autoSpin} />
+          <Viewport builder={model.build} params={deferredParams} color={colorHex} autoSpin={params.autoSpin} />
         </section>
       </main>
 
