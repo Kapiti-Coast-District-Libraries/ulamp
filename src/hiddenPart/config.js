@@ -1,12 +1,11 @@
 // src/hiddenPart/config.js
 
-// 1. EXISTING CONFIG (The Insert/Thread - Gets Exported)
+// 1. THE INSERT (Thread) - Exported
 export const hiddenPartConfig = {
   include: true,
   url: "/hidden/base_insert.stl",
-  upAxis: "Z",        // "Y", "Z", or "X"
-  unitScale: 1,       // 1 for mm
-  centerMode: "footToY0",
+  upAxis: "Z", 
+  unitScale: 1,
   lockCenterXZTo0: true,
   lockBaseYTo0: true,
   localOffset: [0, 0, 0],
@@ -15,21 +14,39 @@ export const hiddenPartConfig = {
   position: [0, 0, 0]
 };
 
-// 2. NEW CONFIG (The Lamp Stand - Visual Only)
+// 2. THE STAND (Visual Base) - Visual Only
 export const visualBaseConfig = {
   include: true,
   url: "/hidden/lamp_base.stl", 
-  upAxis: "Z",        // Adjust if your stand comes in sideways
+  upAxis: "Z", 
   unitScale: 1,
-  
-  // Alignment settings
-  lockCenterXZTo0: true, // Center it under the lamp
-  
-  // You might want to lower this if the lamp sits ON TOP of it
-  // or raise it if the lamp sits AROUND it.
+  lockCenterXZTo0: true,
+  lockBaseYTo0: true,
   localOffset: [0, 0, 0], 
-  
   rotationDeg: [0, 0, 0],
   scale: [1, 1, 1],
   position: [0, 0, 0]
+};
+
+// 3. THE LIGHT BULB - Visual + Emits Light
+export const lightBulbConfig = {
+  include: true,
+  url: "/hidden/light_bulb.stl",
+  upAxis: "Z",
+  unitScale: 1,
+  
+  lockCenterXZTo0: true,
+  lockBaseYTo0: true,
+
+  // Raise the bulb up! (e.g., 50mm up from the floor)
+  localOffset: [0, 0, 0], 
+
+  rotationDeg: [0, 0, 0],
+  scale: [1, 1, 1],
+  position: [0, 0, 0],
+
+  // Light settings
+  lightColor: "#ffaa00", // Warm yellow glow
+  lightIntensity: 60,    // Brightness of the PointLight
+  lightDistance: 300     // How far the light reaches
 };
