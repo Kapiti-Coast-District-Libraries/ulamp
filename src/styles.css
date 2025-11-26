@@ -320,3 +320,53 @@ button:hover { background: #f3f3f7; }
   border: 1px solid #ccc;
   color: #666;
 }
+/* src/styles.css - Append this to the end */
+
+/* Texture Swiper */
+.texture-swiper-container {
+  margin: 4px -4px 8px -4px; /* Pull out slightly to align with edges */
+}
+.texture-swiper {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 4px;
+  scroll-behavior: smooth;
+  /* Hide scrollbar for clean look */
+  scrollbar-width: none; 
+  -ms-overflow-style: none;
+}
+.texture-swiper::-webkit-scrollbar {
+  display: none;
+}
+
+.texture-card {
+  flex: 0 0 auto;
+  min-width: 80px;
+  height: 48px;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+  font-size: 11px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  line-height: 1.1;
+}
+
+.texture-card:hover {
+  background: #f7f7fb;
+  border-color: #cbd5e1;
+}
+
+.texture-card.selected {
+  background: #eff6ff;
+  border-color: #7aa2ff;
+  color: #1d4ed8;
+  font-weight: 600;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
