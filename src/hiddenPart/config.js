@@ -45,6 +45,6 @@ export const lightBulbConfig = {
 
   // Light settings
   lightColor: "#ffaa00", // Warm yellow glow
-  lightIntensity: 60,    // Brightness of the PointLight
+  lightIntensity: 160,    // Brightness of the PointLight
   lightDistance: 300     // How far the light reaches
 };
