@@ -24,6 +24,7 @@ export default function Viewport({ builder, params, color = "#dddddd", autoSpin 
   useEffect(() => {
     const mount = mountRef.current;
     const scene = new THREE.Scene();
+    // Use the dark blue-grey background
     scene.background = new THREE.Color("#12161f");
 
     const w = mount.clientWidth || 800;
@@ -37,6 +38,7 @@ export default function Viewport({ builder, params, color = "#dddddd", autoSpin 
     renderer.setSize(w, h);
     mount.appendChild(renderer.domElement);
 
+    // --- Lighting ---
     const hemi = new THREE.HemisphereLight(0xffffff, 0x222233, 0.65);
     scene.add(hemi);
     const key = new THREE.DirectionalLight(0xffffff, 0.9);
@@ -46,6 +48,7 @@ export default function Viewport({ builder, params, color = "#dddddd", autoSpin 
     rim.position.set(-3, 3, -2);
     scene.add(rim);
 
+    // --- Ground & Helpers ---
     const grid = new THREE.GridHelper(600, 20, 0x2a2f3a, 0x1b202a);
     grid.position.y = 0;
     scene.add(grid);
@@ -53,7 +56,7 @@ export default function Viewport({ builder, params, color = "#dddddd", autoSpin 
     const axes = new THREE.AxesHelper(50);
     scene.add(axes);
 
-    // --- 1. Main Lamp Mesh ---
+    // --- 1. Main Lamp Mesh (The user's design) ---
     const geom = builder(params);
     const mat = new THREE.MeshStandardMaterial({
       color: new THREE.Color(color),
@@ -65,36 +68,36 @@ export default function Viewport({ builder, params, color = "#dddddd", autoSpin 
     mesh.receiveShadow = false;
     scene.add(mesh);
 
-    // --- 2. Hidden Part (Base Insert) ---
+    // --- 2. Hidden Part (The Base Insert) ---
+    // We check if it is enabled in the config
     if (hiddenPartConfig && hiddenPartConfig.include && hiddenPartConfig.url) {
       const loader = new STLLoader();
       loader.load(hiddenPartConfig.url, (geometry) => {
-        // Apply Config Logic (Same as export)
         
-        // 1. Unit Scale
+        // --- Apply Config Logic (Mirrors the export logic) ---
+        
+        // A. Unit Scale (e.g. converting inches to mm)
         const us = hiddenPartConfig.unitScale || 1;
         if (us !== 1) geometry.scale(us, us, us);
 
-        // 2. Up Axis correction
+        // B. Up Axis correction (Z-up from CAD to Y-up for Three.js)
         if (hiddenPartConfig.upAxis === "Z") {
           geometry.rotateX(-Math.PI / 2);
         }
 
-        // 3. Centering Logic
+        // C. Centering Logic
         geometry.computeBoundingBox();
         const bbox = geometry.boundingBox;
-        const size = new THREE.Vector3(); 
-        bbox.getSize(size);
         const center = new THREE.Vector3(); 
         bbox.getCenter(center);
 
-        // Move to origin based on flags
+        // Calculate shifts to lock the base to the origin/floor
         const tx = hiddenPartConfig.lockCenterXZTo0 ? -center.x : 0;
         const ty = hiddenPartConfig.lockBaseYTo0 ? -bbox.min.y : 0;
         const tz = hiddenPartConfig.lockCenterXZTo0 ? -center.z : 0;
         geometry.translate(tx, ty, tz);
 
-        // 4. Rotation
+        // D. Manual Rotation
         if (hiddenPartConfig.rotationDeg) {
           const [rx, ry, rz] = hiddenPartConfig.rotationDeg;
           geometry.rotateX(rx * Math.PI / 180);
@@ -102,20 +105,20 @@ export default function Viewport({ builder, params, color = "#dddddd", autoSpin 
           geometry.rotateZ(rz * Math.PI / 180);
         }
 
-        // 5. Scale
+        // E. Manual Scale
         if (hiddenPartConfig.scale) {
           const [sx, sy, sz] = hiddenPartConfig.scale;
           geometry.scale(sx, sy, sz);
         }
 
-        // 6. Local Offset
+        // F. Manual Offset
         if (hiddenPartConfig.localOffset) {
           const [lx, ly, lz] = hiddenPartConfig.localOffset;
           geometry.translate(lx, ly, lz);
         }
 
-        // Create Mesh
-        // Make it look like dark hard plastic/metal to contrast with the lamp
+        // --- Create Base Mesh ---
+        // We use a dark, slightly metallic material to contrast with the lamp
         const baseMat = new THREE.MeshStandardMaterial({
           color: 0x333333,
           roughness: 0.5,
@@ -132,6 +135,7 @@ export default function Viewport({ builder, params, color = "#dddddd", autoSpin 
       });
     }
 
+    // --- Controls & Loop ---
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
@@ -182,6 +186,7 @@ export default function Viewport({ builder, params, color = "#dddddd", autoSpin 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); 
 
+  // Rebuild main geometry when params change
   useEffect(() => {
     if (!meshRef.current) return;
     const geom = builder(params);
@@ -190,6 +195,7 @@ export default function Viewport({ builder, params, color = "#dddddd", autoSpin 
     if (old) old.dispose();
   }, [builder, params]);
 
+  // Update main color
   useEffect(() => {
     if (!meshRef.current) return;
     const mat = meshRef.current.material;
