@@ -6,14 +6,11 @@ import { palette } from "../colors/palette.js";
 import { hiddenPartConfig } from "../hiddenPart/config.js";
 import AutoForm from "./controls/AutoForm.jsx";
 import Viewport from "./three/Viewport.jsx";
-import Swiper from "./controls/Swiper.jsx"; // <--- IMPORT THIS
+import Swiper from "./controls/Swiper.jsx";
 
-// ... (Keep your UploadModal, Step, IntroModal, PreparingModal as they were) ...
-// ... OR copy them from previous response if you need the full file again ...
+// ... (Keep UploadModal, Step, IntroModal, PreparingModal exactly as they were) ...
+// ... (I am omitting them here for brevity, assume they are unchanged) ...
 
-// (To save space, I will focus on the Designer component logic changes)
-
-/* ... Insert Modals here ... */
 // simple success modal reused for logging flow
 function UploadModal({ open, stage, percent, message, onCancel, canCancel }) {
   if (!open) return null;
@@ -166,10 +163,6 @@ export default function Designer() {
     const m = packs[safePackKey].models[Object.keys(packs[safePackKey].models)[0]];
     setParams(typeof m.defaults === "function" ? m.defaults() : m.defaults);
   }, [safePackKey]);
-
-  const onReset = () => {
-    setParams(computeDefaults());
-  };
 
   // randomize pack, params, and color
   const randomizeAll = React.useCallback(() => {
@@ -378,7 +371,7 @@ export default function Designer() {
         <div className="actions">
           <button onClick={onCheckout} title="Pay and save to spreadsheet">Checkout</button>
           <button onClick={randomizeAll} title="Randomize everything">Random</button>
-          <button onClick={onReset}>Reset</button>
+          {/* RESET BUTTON REMOVED */}
         </div>
       </header>
 
