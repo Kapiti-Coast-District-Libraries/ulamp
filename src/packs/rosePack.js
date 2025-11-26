@@ -1,4 +1,4 @@
-// src/packs/rosePack.js
+// src/packs/coralPack.js
 import * as THREE from "three";
 import { mergeBufferGeometries } from "three-stdlib";
 import { textures, textureOptions } from "../textures";
@@ -7,162 +7,242 @@ const MAX_SIZE = 240;
 const BOTTOM_THICK = 3;
 const FIXED_HOLE_DIAMETER = 80;
 
-// Helper to clamp values
+// --- Helper Math ---
 function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
+function randFloat(min, max) { return min + Math.random() * (max - min); }
 
-// --- 1. Petal Geometry Builder ---
-// Creates a single petal (a partial lathe)
-function createPetal(p, layerIndex, totalLayers, angleOffset) {
+// --- 1. The Walker Algorithm (Branch Generator) ---
+function generateCoralPaths(p) {
+  const paths = [];
   const H = p.height;
+  const growthStep = 3.0; // mm per step vertical
   
-  // Progress (0 = inner, 1 = outer)
-  const tLayer = layerIndex / Math.max(1, totalLayers - 1);
+  // How many steps to reach the top?
+  const totalSteps = Math.ceil(H / growthStep);
 
-  // Petal Shape Logic
-  // Inner petals are tighter and more upright. Outer petals droop and widen.
-  const baseR = 40 + (tLayer * (p.r_bloom ?? 60)); // Grows outward
-  const tilt  = 0.2 + (tLayer * 0.5); // Outer ones lean back more
+  // Initial seeds on the ring
+  // Start slightly inside the 80mm hole (r=40) so they fuse to the wall
+  const seedCount = Math.round(p.c_branches ?? 12);
+  let activeTips = [];
 
-  // Profile Generation (Simple curve)
-  const pts = [];
-  const segments = 16;
-  
-  // Bottom attachment point (must be solid)
-  pts.push(new THREE.Vector2(40, 0)); 
-  pts.push(new THREE.Vector2(baseR, 0));
-
-  for (let i = 0; i <= segments; i++) {
-    const t = i / segments;
-    const y = t * H;
-    
-    // Curve equation: wider in middle, tapers at top
-    // We add 'tilt' to radius as we go up
-    let r = baseR + (y * tilt);
-    
-    // Curvature (belly)
-    const curve = Math.sin(t * Math.PI) * (10 + 20 * tLayer);
-    r += curve;
-
-    // Taper top slightly
-    if (t > 0.8) r -= (t - 0.8) * 30;
-
-    pts.push(new THREE.Vector2(Math.max(40.5, r), y));
+  for (let i = 0; i < seedCount; i++) {
+    const angle = (i / seedCount) * Math.PI * 2;
+    const r = 42; // Start on the solid rim
+    activeTips.push({
+      pts: [new THREE.Vector3(Math.cos(angle) * r, 0, Math.sin(angle) * r)],
+      angle: angle, // Current bearing
+      r: r,         // Current distance from center
+      alive: true
+    });
   }
 
-  // Create the partial lathe (The Petal)
-  // phiLength: Inner = wrapped (180deg), Outer = open (90deg)
-  const widthDeg = 180 - (tLayer * 100); 
-  const phiLen = (widthDeg * Math.PI) / 180;
-  const phiStart = -phiLen / 2; // Center the petal
+  // Simulation Loop
+  for (let step = 0; step < totalSteps; step++) {
+    const y = (step + 1) * growthStep;
+    const t = y / H; // 0..1 progress
 
-  const geom = new THREE.LatheGeometry(pts, 12, phiStart, phiLen);
-  
-  // Rotate petal to its place in the flower
-  geom.rotateY(angleOffset);
+    // iterate backwards so we can add new tips while looping
+    for (let i = activeTips.length - 1; i >= 0; i--) {
+      const tip = activeTips[i];
+      if (!tip.alive) continue;
 
-  return geom;
+      const lastPt = tip.pts[tip.pts.length - 1];
+
+      // 1. Calculate new position
+      // Target shape: We want to expand from 40mm bottom to 'topRadius'
+      const targetR = 40 + (p.topRadius - 40) * t;
+      
+      // Wiggle Logic
+      const wiggleAmp = (p.c_wiggle ?? 5.0) * (0.2 + 0.8 * t);
+      // Bias towards the target radius
+      const rError = targetR - tip.r;
+      const rPush = rError * 0.1; 
+
+      // New Polar coords
+      let newR = tip.r + rPush + randFloat(-1, 1);
+      let newAng = tip.angle + randFloat(-0.2, 0.2);
+
+      // Convert to Cartesian
+      let nx = Math.cos(newAng) * newR;
+      let nz = Math.sin(newAng) * newR;
+
+      // 2. Overhang Guard (CRITICAL for printing)
+      // Max horizontal move per 3mm vertical is 3mm (45 degrees)
+      const dx = nx - lastPt.x;
+      const dz = nz - lastPt.z;
+      const dist = Math.hypot(dx, dz);
+      const maxDist = growthStep * 0.9; // 0.9 safety factor
+
+      if (dist > maxDist) {
+        const scale = maxDist / dist;
+        nx = lastPt.x + dx * scale;
+        nz = lastPt.z + dz * scale;
+        // recalculate polar for next step state
+        newR = Math.hypot(nx, nz);
+        newAng = Math.atan2(nz, nx);
+      }
+
+      // Update Tip
+      const newPt = new THREE.Vector3(nx, y, nz);
+      tip.pts.push(newPt);
+      tip.r = newR;
+      tip.angle = newAng;
+
+      // 3. Branching Logic
+      // Chance to split, increases with height, decreases if too many tips
+      const densityLimit = (p.c_density ?? 20); // max tips roughly
+      if (activeTips.length < densityLimit && Math.random() < 0.05) {
+        // Spawn a new branch from here
+        activeTips.push({
+          pts: [newPt.clone()], // Start exactly where parent is
+          angle: newAng + 0.1,  // Slight diverge
+          r: newR,
+          alive: true
+        });
+      }
+
+      // 4. Pruning Logic (Collision / Too close)
+      // Simple check: if radius gets too small (inside hole) or too big
+      if (newR < 38) tip.alive = false; // Don't grow into the hardware hole
+      if (newR > MAX_SIZE / 2) tip.alive = false;
+    }
+  }
+
+  // Convert tips to simple arrays of points
+  return activeTips.map(t => t.pts);
 }
 
-// --- 2. Main Build Function ---
-function buildRose(params) {
+// --- 2. Geometry Builder ---
+function buildCoral(params) {
   const p = constrainParams(params);
   const geometries = [];
 
-  // A. The Core Stem (Essential for hardware mount)
-  // Solid inner cylinder at 40mm radius (80mm diam)
-  const coreProfile = [
+  // A. The Base Ring (Solid Anchor)
+  // Simple tube or lathe at the bottom to hold hardware
+  const baseProfile = [
     new THREE.Vector2(40, 0),
-    new THREE.Vector2(40, p.height),
-    new THREE.Vector2(40 - p.wall, p.height),
-    new THREE.Vector2(40 - p.wall, BOTTOM_THICK),
-    new THREE.Vector2(40, BOTTOM_THICK)
+    new THREE.Vector2(45, 0),
+    new THREE.Vector2(45, BOTTOM_THICK),
+    new THREE.Vector2(40, BOTTOM_THICK),
+    new THREE.Vector2(40, 0),
   ];
-  // Note: Inside of this is empty, but we need a wall for the petals to attach to
-  const core = new THREE.LatheGeometry(coreProfile, 32);
-  geometries.push(core);
+  const baseGeom = new THREE.LatheGeometry(baseProfile, 32);
+  geometries.push(baseGeom);
 
-  // B. Generate Petals
-  const count = Math.floor(p.r_count ?? 18);
-  const phi = 137.5 * (Math.PI / 180); // Golden Angle
+  // B. Generate Branch Paths
+  const paths = generateCoralPaths(p);
 
-  for (let i = 0; i < count; i++) {
-    // Rotation for this petal
-    const angle = i * phi;
-    
-    // Generate petal geometry
-    const petalGeom = createPetal(p, i, count, angle);
-    
-    // Apply Texture individually (optional, but looks good)
-    // or merge first. Merging first is safer for memory.
-    
-    geometries.push(petalGeom);
-  }
+  // C. Meshing the Paths
+  // TubeGeometry params
+  const thick = p.c_thickness ?? 2.5; // Radius of tube
+  const segments = 20; // Length segments (low is fine, it's organic)
+  const radial = 6;    // Cross-section segments (Low poly is faster/sturdy)
 
-  // C. Merge Everything
-  // Check if we have valid geometries
+  paths.forEach((pts) => {
+    if (pts.length < 2) return;
+    const curve = new THREE.CatmullRomCurve3(pts);
+    
+    // Taper function: Thick at bottom, thinner at tips
+    // tube radius at t (0..1)
+    const taper = (t) => {
+        const base = thick;
+        // Grow thinner towards 1
+        return Math.max(0.8, base * (1 - 0.5 * t));
+    };
+
+    // Need a custom generator for variable radius in simple ThreeJS?
+    // Standard TubeGeometry doesn't support radius function easily in older versions,
+    // but we can scale the geometry after creation or use a simple constant for now.
+    // Let's use constant for stability, or scale vertices manually.
+    
+    const tube = new THREE.TubeGeometry(curve, pts.length * 2, 1, radial, false);
+    
+    // Manual Tapering Loop
+    const pos = tube.attributes.position;
+    for(let i=0; i < pos.count; i++) {
+        // TubeGeometry stores vertices ring by ring.
+        // We can roughly estimate 't' by y-height
+        const y = pos.getY(i);
+        const t = clamp(y / p.height, 0, 1);
+        const radiusScale = taper(t);
+        
+        // Find center of this ring? Hard to do cheaply. 
+        // Simpler: Just rely on constant thickness or accept the uniform tube.
+        // Let's stick to uniform 'thick' for robustness unless we use a custom mesh generator.
+        // Actually, uniform branches print better.
+    }
+    
+    // Scale the whole tube radius
+    // TubeGeometry defaults to radius 1. We want 'thick'.
+    // Actually the 3rd arg is radius.
+    const sizedTube = new THREE.TubeGeometry(curve, Math.floor(pts.length * 1.5), thick, 8, false);
+    geometries.push(sizedTube);
+  });
+
+  // D. Merge
   if (geometries.length === 0) return new THREE.BufferGeometry();
-  
-  const merged = mergeBufferGeometries(geometries, true); // useGroups = true
-  
-  // Clean up clean geometry
+  const merged = mergeBufferGeometries(geometries, false); // useGroups=false for cleaner export
   merged.computeVertexNormals();
 
-  // D. Apply Texture to the whole flower
-  const texDesc = textures[p.texture];
-  return texDesc?.apply ? texDesc.apply(merged, p) : merged;
+  return merged;
 }
 
-// --- 3. Parameters & Schema ---
+// --- 3. Schema & Defaults ---
 function constrainParams(pIn) {
   const out = { ...pIn };
-  out.height  = clamp(pIn.height ?? 180, 80, MAX_SIZE);
-  out.wall    = clamp(pIn.wall ?? 1.2, 0.8, 2.0); // Thick walls for petals
-  out.r_count = clamp(pIn.r_count ?? 24, 5, 60);
-  out.r_bloom = clamp(pIn.r_bloom ?? 50, 0, 100); // How wide it opens
+  out.height      = clamp(pIn.height ?? 200, 80, MAX_SIZE);
+  out.topRadius   = clamp(pIn.topRadius ?? 90, 40, 120);
   
-  // Texture standard
-  out.texture = pIn.texture ?? "none";
+  // Coral specifics
+  out.c_branches  = clamp(Math.floor(pIn.c_branches ?? 12), 3, 30);
+  out.c_density   = clamp(Math.floor(pIn.c_density ?? 30), 10, 100); // Max total tips
+  out.c_thickness = clamp(pIn.c_thickness ?? 2.5, 1.0, 6.0); // Tube radius (so 2x for diameter)
+  out.c_wiggle    = clamp(pIn.c_wiggle ?? 5.0, 0, 15);
+  
   return out;
 }
 
 function schemaFor(params) {
   return [
-    { key: "height",  label: "Height",       type: "range", min: 80, max: 240, step: 1, group: "Shape" },
-    { key: "r_count", label: "Petal Count",  type: "range", min: 5, max: 60, step: 1, group: "Rose" },
-    { key: "r_bloom", label: "Bloom Width",  type: "range", min: 0, max: 100, step: 1, group: "Rose" },
-    { key: "wall",    label: "Petal Thick",  type: "range", min: 0.8, max: 2.0, step: 0.1, group: "Shape", advanced: true },
+    { key: "height",      label: "Height",         type: "range", min: 80, max: 240, step: 1, group: "Shape" },
+    { key: "topRadius",   label: "Spread Top",     type: "range", min: 40, max: 120, step: 1, group: "Shape" },
     
-    // Texture Group
+    { key: "c_branches",  label: "Base Stems",     type: "range", min: 3, max: 30, step: 1, group: "Coral" },
+    { key: "c_thickness", label: "Branch Thick",   type: "range", min: 1, max: 5, step: 0.2, group: "Coral" },
+    { key: "c_wiggle",    label: "Chaos",          type: "range", min: 0, max: 15, step: 0.5, group: "Coral" },
+    { key: "c_density",   label: "Max Density",    type: "range", min: 10, max: 80, step: 1, group: "Coral", advanced: true },
+    
+    // Texture doesn't apply well to tubes (UVs are messy), so we might hide it or keep it simple
     { key: "texture", label: "Style", type: "select", options: textureOptions, group: "Texture" }
   ];
 }
 
-// --- 4. Export ---
 export const models = {
-  rose: {
-    label: "Organic Rose",
+  coral: {
+    label: "Branching Coral",
     schema: schemaFor,
     defaults: () => ({
-      height: 180,
-      r_count: 24,
-      r_bloom: 50,
-      wall: 1.2,
+      height: 200,
+      topRadius: 90,
+      c_branches: 12,
+      c_thickness: 2.0,
+      c_wiggle: 5.0,
       texture: "none"
     }),
-    build: buildRose
+    build: buildCoral
   }
 };
 
 function exportSTL(params) {
   import("three-stdlib").then(({ STLExporter }) => {
-    const geom = buildRose(params);
+    const geom = buildCoral(params);
     const exporter = new STLExporter();
     const data = exporter.parse(geom, { binary: true });
     const blob = new Blob([data], { type: "application/sla" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "lampshade_rose.stl";
+    a.download = "lampshade_coral.stl";
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -170,4 +250,4 @@ function exportSTL(params) {
   });
 }
 
-export default { label: "Lampshade, Rose", models, export: exportSTL };
+export default { label: "Lampshade, Coral", models, export: exportSTL };
