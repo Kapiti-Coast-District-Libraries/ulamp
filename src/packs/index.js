@@ -1,4 +1,9 @@
 // src/packs/index.js
+
+// --- PATCH: Enforce minimum wall thickness on export ---
+import "../utils/patchExporter.js"; 
+// -------------------------------------------------------
+
 import shadePack from "./shadePack.js";
 import superellipsePack from "./superellipsePack.js";
 import sockBallsPack from "./sockBallsPack.js";
