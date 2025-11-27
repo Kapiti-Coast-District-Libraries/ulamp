@@ -1,5 +1,4 @@
 // src/textures/pinchStacks.js
-// (Internal ID: pinchStacks)
 import * as THREE from "three";
 
 const MAX_DIAMETER_MM = 240;
@@ -19,7 +18,7 @@ function apply(geometry, p) {
   const skew    = clamp(p.m_ps_theta_skew ?? 2.0, 0, 12);
   const easeMM  = clamp(p.m_ps_ease_bottom_mm ?? 10, 0, 80);
 
-  // 1. Analyze Geometry: Find vertical bounds and max radius per height (Envelope)
+  // 1. Analyze Geometry: Build an Envelope of the outer radius
   let minY = Infinity, maxY = -Infinity;
   for (let i = 0; i < pos.count; i++) {
     const y = pos.getY(i);
@@ -29,19 +28,29 @@ function apply(geometry, p) {
   const height = Math.max(1e-6, maxY - minY);
   const bottomY = (p.bottom_thickness ?? 3) + 0.1;
 
-  // We bin the max radius to approximate the "outer shell" radius at any Y
-  // This allows us to apply the same displacement to inner & outer walls.
-  const BIN_COUNT = 200;
+  // Use more bins for smoother vertical resolution
+  const BIN_COUNT = 400; 
   const bins = new Float32Array(BIN_COUNT).fill(0);
-  const binStep = height / BIN_COUNT;
+  const binStep = height / (BIN_COUNT - 1);
   
   for (let i = 0; i < pos.count; i++) {
     const y = pos.getY(i);
     if (y < minY) continue;
     const r = Math.hypot(pos.getX(i), pos.getZ(i));
     const b = Math.min(BIN_COUNT - 1, Math.floor((y - minY) / binStep));
-    if (r > bins[b]) bins[b] = r; // capture outer shell radius
+    if (r > bins[b]) bins[b] = r;
   }
+
+  // Helper to get interpolated outer radius
+  const getOuterR = (y) => {
+    if (y <= minY) return bins[0];
+    if (y >= maxY) return bins[BIN_COUNT - 1];
+    const t = (y - minY) / binStep;
+    const b0 = Math.floor(t);
+    const b1 = Math.min(BIN_COUNT - 1, b0 + 1);
+    const f = t - b0;
+    return bins[b0] * (1 - f) + bins[b1] * f;
+  };
 
   // 2. Build Pinch Centers
   const centers = [];
@@ -62,7 +71,6 @@ function apply(geometry, p) {
     let theta = Math.atan2(z, x);
     if (theta < 0) theta += Math.PI * 2;
 
-    // Calculate Pinch Factor (0..1)
     let pinch = 0;
     for (let k = 0; k < centers.length; k++) {
       const c = centers[k];
@@ -75,18 +83,14 @@ function apply(geometry, p) {
     pinch = Math.min(1, pinch);
 
     const ease = y < bottomY + easeMM ? smooth01((y - bottomY) / Math.max(1e-6, easeMM)) : 1.0;
-    const kPull = depth * ease * pinch; // Fraction of OUTER radius to pull in
+    const kPull = depth * ease * pinch;
 
-    // Retrieve Reference Outer Radius for this height
-    const b = Math.min(BIN_COUNT - 1, Math.floor((y - minY) / binStep));
-    const refR = bins[b];
-
-    // Calculate absolute displacement in mm
-    // This moves both inner and outer walls by the exact same amount, preserving thickness.
+    // Use Interpolated Reference Radius
+    const refR = getOuterR(y);
     const displacementMM = refR * kPull;
 
-    // Apply displacement (move vertex towards center)
-    // Safety: don't invert the geometry (keep at least 0.5mm radius)
+    // Apply strict displacement (preserves thickness)
+    // Safety clamp prevents inversion but allows full displacement otherwise
     const safeDisp = Math.min(displacementMM, Math.max(0, r - 0.5));
     const scale = 1.0 - (safeDisp / r);
 
@@ -116,9 +120,9 @@ export default {
     { key: "m_ps_count",      label: "Stack Count",      type: "range", min: 1, max: 12, step: 1, group: "Texture" },
     { key: "m_ps_depth",      label: "Pinch Strength",   type: "range", min: 0, max: 0.95, step: 0.01, group: "Texture" },
     { key: "m_ps_spread_mm",  label: "Spacing (mm)",     type: "range", min: 10, max: 160, step: 1, group: "Texture" },
-    { key: "m_ps_width_mm",       label: "Pinch Softness",   type: "range", min: 6, max: 80, step: 1, group: "Texture", advanced: true },
-    { key: "m_ps_theta_skew",     label: "Twist / Skew",     type: "range", min: 0, max: 12, step: 0.1, group: "Texture", advanced: true },
-    { key: "m_ps_ease_bottom_mm", label: "Base Safe Zone",   type: "range", min: 0, max: 80, step: 1, group: "Texture", advanced: true },
+    { key: "m_ps_width_mm",   label: "Pinch Softness",   type: "range", min: 6, max: 80, step: 1, group: "Texture", advanced: true },
+    { key: "m_ps_theta_skew", label: "Twist / Skew",     type: "range", min: 0, max: 12, step: 0.1, group: "Texture", advanced: true },
+    { key: "m_ps_ease_bottom_mm", label: "Base Safe Zone", type: "range", min: 0, max: 80, step: 1, group: "Texture", advanced: true },
   ],
   headroom: () => 0,
   apply,
