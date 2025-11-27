@@ -6,11 +6,10 @@
     "dev": "node index.js"
   },
   "dependencies": {
-    "better-sqlite3": "^12.4.1",
+    "@supabase/supabase-js": "^2.46.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
-    "googleapis": "^132.0.0",
     "multer": "^1.4.5-lts.1",
     "node-fetch": "^3.3.2",
     "stripe": "^16.8.0"
