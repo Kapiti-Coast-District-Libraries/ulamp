@@ -8,10 +8,7 @@ import AutoForm from "./controls/AutoForm.jsx";
 import Viewport from "./three/Viewport.jsx";
 import Swiper from "./controls/Swiper.jsx";
 
-// ... (Keep UploadModal, Step, IntroModal, PreparingModal exactly as they were) ...
-// ... (I am omitting them here for brevity, assume they are unchanged) ...
-
-// simple success modal reused for logging flow
+// Simple success modal reused for logging flow
 function UploadModal({ open, stage, percent, message, onCancel, canCancel }) {
   if (!open) return null;
   return (
@@ -20,7 +17,7 @@ function UploadModal({ open, stage, percent, message, onCancel, canCancel }) {
         <div className="upload-title">Saving your lamp</div>
         <div className="upload-steps">
           <Step label="Verify payment" active={stage >= 1} done={stage > 1} />
-          <Step label="Record order" active={stage >= 2} done={stage > 2} />
+          <Step label="Save order" active={stage >= 2} done={stage > 2} />
           <Step label="Done" active={stage >= 3} done={stage > 3} />
         </div>
         <div className="upload-bar">
@@ -44,7 +41,6 @@ function Step({ label, active, done }) {
   );
 }
 
-/* Uses your existing .intro-* styles */
 function IntroModal({ open, onClose }) {
   if (!open) return null;
   return (
@@ -54,7 +50,6 @@ function IntroModal({ open, onClose }) {
         <p className="intro-sub">A quick guide before you start</p>
 
         <div className="intro-gallery">
-          {/* Replace with your images */}
           <img src="/images/example-1.jpg" alt="Example lamp 1" />
           <img src="/images/example-2.jpg" alt="Example lamp 2" />
         </div>
@@ -87,7 +82,6 @@ function IntroModal({ open, onClose }) {
   );
 }
 
-/* Small preparing popup, minimal new CSS, dark scheme like your upload modal */
 function PreparingModal({ open, message = "Preparing your file..." }) {
   if (!open) return null;
   return (
@@ -145,6 +139,15 @@ export default function Designer() {
 
   // prevent pack change effect from wiping randomized params once
   const skipNextDefaultsRef = React.useRef(false);
+
+  // ---------------------------------------------------------
+  // NEW: Pre-warm the server on load to prevent Cold Start delay
+  // ---------------------------------------------------------
+  React.useEffect(() => {
+    fetch('/api/health').catch(() => {
+      // Ignore errors, just waking up the server
+    });
+  }, []);
 
   // decide whether to show the welcome box on first paint
   React.useEffect(() => {
@@ -230,7 +233,7 @@ export default function Designer() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [modalOpen, modalStage]);
 
-  // success flow, log variables to sheet, no STL, no Drive
+  // success flow, log variables to Supabase
   React.useEffect(() => {
     const usp = new URLSearchParams(window.location.search);
     const success = usp.get("success");
@@ -242,7 +245,7 @@ export default function Designer() {
     // hide welcome if it was open for any reason
     setWelcomeOpen(false);
 
-    // show the upload modal immediately so it is the first thing the user sees
+    // show the upload modal immediately
     setModalOpen(true);
     setModalCanClose(false);
     setModalStage(1);
@@ -266,23 +269,23 @@ export default function Designer() {
 
         setModalStage(2);
         setModalPercent(75);
-        setUploadMsg("Recording your order to the spreadsheet...");
+        setUploadMsg("Saving your order...");
 
         const lr = await fetch(`/api/log/${sessionId}`, { method: "POST" });
         if (!lr.ok) {
           const t = await lr.text().catch(() => "");
-          setUploadMsg(`Could not record the order, ${lr.status}, ${t}`);
+          setUploadMsg(`Could not save the order, ${lr.status}, ${t}`);
           setModalCanClose(true);
           return;
         }
 
         setModalStage(3);
         setModalPercent(100);
-        setUploadMsg("Order recorded. You can close this window now.");
+        setUploadMsg("Order saved. You can close this window now.");
         setTimeout(() => setModalCanClose(true), 600);
       } catch (e) {
         console.error(e);
-        setUploadMsg("Something went wrong while recording your order.");
+        setUploadMsg("Something went wrong while saving your order.");
         setModalCanClose(true);
       } finally {
         const url = new URL(window.location.href);
@@ -294,7 +297,7 @@ export default function Designer() {
     run();
   }, []);
 
-  // auto close the small checkout popup when user returns from checkout or navigates back
+  // auto close the small checkout popup
   React.useEffect(() => {
     const closePrep = () => setPreparingOpen(false);
 
