@@ -8,7 +8,7 @@ import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 
-// --- HELPER: Cached Hidden Part Loader (Same as before) ---
+// --- HELPER: Cached Hidden Part Loader ---
 const hiddenCache = { promise: null, geom: null };
 async function loadHiddenGeometry() {
   if (!hiddenPartConfig?.include) return null;
@@ -30,47 +30,92 @@ async function loadHiddenGeometry() {
   return hiddenCache.promise;
 }
 
-// --- HELPER: Transform Geometry (Same as before) ---
+// --- HELPER: Transform Geometry (EXACT MATCH TO VIEWPORT) ---
 function transformHiddenGeometry(src) {
   if (!src) return null;
-  const g = src.clone();
-  // Simplified matrix application based on config
-  // (Assuming your existing logic works, condensing for brevity)
-  const mats = [];
-  const up = String(hiddenPartConfig.upAxis || "Y").toUpperCase();
-  if (up === "Z") mats.push(new THREE.Matrix4().makeRotationX(THREE.MathUtils.degToRad(-90)));
-  const us = Number(hiddenPartConfig.unitScale ?? 1) || 1;
-  if (us !== 1) mats.push(new THREE.Matrix4().makeScale(us, us, us));
+  const geometry = src.clone();
+  const config = hiddenPartConfig;
+
+  // 1. Unit Scale
+  const us = config.unitScale || 1;
+  if (us !== 1) geometry.scale(us, us, us);
+
+  // 2. Up Axis Correction
+  if (config.upAxis === "Z") geometry.rotateX(-Math.PI / 2);
+
+  // 3. Dynamic Centering (The step that was missing!)
+  geometry.computeBoundingBox();
+  const bbox = geometry.boundingBox;
+  const center = new THREE.Vector3();
+  bbox.getCenter(center);
+
+  const tx = config.lockCenterXZTo0 ? -center.x : 0;
+  const ty = config.lockBaseYTo0 ? -bbox.min.y : 0;
+  const tz = config.lockCenterXZTo0 ? -center.z : 0;
+  geometry.translate(tx, ty, tz);
+
+  // 4. Config Rotation
+  if (config.rotationDeg) {
+    const [rx, ry, rz] = config.rotationDeg;
+    geometry.rotateX(rx * Math.PI / 180);
+    geometry.rotateY(ry * Math.PI / 180);
+    geometry.rotateZ(rz * Math.PI / 180);
+  }
+
+  // 5. Config Scale
+  if (config.scale) {
+    const [sx, sy, sz] = config.scale;
+    geometry.scale(sx, sy, sz);
+  }
+
+  // 6. Local Offset
+  if (config.localOffset) {
+    const [lx, ly, lz] = config.localOffset;
+    geometry.translate(lx, ly, lz);
+  }
+
+  // 7. World Position (Since we are merging geometries, we must bake the mesh position in)
+  if (config.position) {
+    const [px, py, pz] = config.position;
+    geometry.translate(px, py, pz);
+  }
   
-  // Apply hardcoded offsets/rotations from config if needed
-  // ... (Your previous logic for centerMatrix/translation goes here if needed strictly)
-  
-  return g;
+  return geometry;
 }
 
 // --- HELPER: Merge & Build ---
 async function buildMergedGeometry(builder, lampParams, includeHidden) {
   const lampRaw = builder(lampParams);
-  // Remove UVs/Colors for cleaner merge if needed, keep Normals
+  
+  // Prepare lamp geometry
   let g = lampRaw.clone();
   if (g.index) g = g.toNonIndexed();
-  // Cleanup attributes
+  // Cleanup attributes to ensure clean merge (only keep pos/norm)
   for (const k of Object.keys(g.attributes)) {
     if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
   }
   
   const geoms = [g];
+
   if (includeHidden) {
     try {
       const hid = await loadHiddenGeometry();
       if (hid) {
+        // Apply the exact same transforms as the viewport
         const hidT = transformHiddenGeometry(hid); 
-        // Note: You might need to fully restore your matrix logic if the insert is misaligned
-        if (hidT) geoms.push(hidT);
+        
+        // Prepare hidden geometry for merge
+        if (hidT.index) {
+          const temp = hidT.toNonIndexed();
+          geoms.push(temp);
+        } else {
+          geoms.push(hidT);
+        }
       }
     } catch (e) { console.error(e); }
   }
   
+  // Merge
   const merged = mergeGeometries(geoms, true);
   return merged || geoms[0];
 }
@@ -104,7 +149,6 @@ export default function AdminPage() {
     if (!selectedOrder) return {};
     let p = {};
     try {
-      // Supabase stores JSONB as object, but sometimes it might be a string if migrated
       p = typeof selectedOrder.params_json === "string" 
         ? JSON.parse(selectedOrder.params_json) 
         : selectedOrder.params_json;
@@ -133,7 +177,7 @@ export default function AdminPage() {
     if (!canBuild || !selectedOrder) return;
     try {
       setExporting(true);
-      // Re-run builder with exact params
+      // Re-run builder with exact params + hidden part
       const geom = await buildMergedGeometry(model.build, params, true);
       const exporter = new STLExporter();
       const stlData = exporter.parse(new THREE.Mesh(geom), { binary: true });
@@ -145,6 +189,7 @@ export default function AdminPage() {
       link.click();
     } catch (e) {
       alert("Error exporting STL: " + e.message);
+      console.error(e);
     } finally {
       setExporting(false);
     }
@@ -213,7 +258,6 @@ export default function AdminPage() {
                   <Viewport 
                     builder={model.build} 
                     params={params} 
-                    // Use stored color or default grey
                     color={params.colorHex || "#cccccc"} 
                     autoSpin={true} 
                   />
@@ -328,6 +372,7 @@ export default function AdminPage() {
         
         .no-selection { display: flex; justify-content: center; align-items: center; height: 100%; color: #999; font-size: 18px; }
         .loading { padding: 20px; text-align: center; color: #666; }
+        .empty { padding: 20px; text-align: center; color: #888; font-style: italic; }
       `}</style>
     </div>
   );
