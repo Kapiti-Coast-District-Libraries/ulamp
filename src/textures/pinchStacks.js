@@ -1,4 +1,4 @@
-// src/textures/orbitOffset.js
+// src/textures/pinchStacks.js
 // (Internal ID: pinchStacks)
 import * as THREE from "three";
 
@@ -96,5 +96,10 @@ export default {
     { key: "m_ps_ease_bottom_mm", label: "Base Safe Zone",   type: "range", min: 0, max: 80, step: 1, group: "Texture", advanced: true },
   ],
   headroom: () => 0,
+  // NEW: Tells packs how much this texture shrinks the model
+  minScale: (p) => {
+    const depth = Math.min(0.95, Math.max(0, p.m_ps_depth ?? 0.35));
+    return Math.max(0.05, 1.0 - depth);
+  },
   apply,
 };
