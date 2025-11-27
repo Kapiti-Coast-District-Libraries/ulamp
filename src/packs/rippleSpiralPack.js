@@ -113,7 +113,15 @@ function estimateMinScale(p) {
       if (s < minS) minS = s;
     }
   }
-  return Math.max(0.2, Math.min(1, minS));
+
+  // NEW: Incorporate texture scaling (e.g. Pinch Stacks)
+  const tex = textures[p.texture];
+  if (tex && typeof tex.minScale === 'function') {
+    minS *= tex.minScale(p);
+  }
+
+  // Relaxed lower bound to 0.05 to allow deep pinches
+  return Math.max(0.05, Math.min(1, minS));
 }
 
 /* constraints and build */
@@ -150,7 +158,8 @@ function constrainParams(pIn = {}, caps = PREVIEW_CAPS) {
 
   const minS = estimateMinScale(out);
   out._minScale = minS;
-  out._wallForLathe = clamp(out.wall / Math.max(1e-6, minS), MIN_THICK, 3.0);
+  // NEW: Increased max wall inflation to 12.0 to support deep texture pinches
+  out._wallForLathe = clamp(out.wall / Math.max(1e-6, minS), MIN_THICK, 12.0);
 
   out.radialSegments = recommendedRadialSegments(out, caps);
   out.resolution     = recommendedResolution(out, caps);
