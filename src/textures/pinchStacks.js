@@ -8,8 +8,6 @@ function fract(x) { return x - Math.floor(x); }
 function hash1(t) { return fract(Math.sin(t * 91.345) * 43758.5453); }
 
 // --- UNIFIED MATH HELPERS ---
-// We extract the math so the Safety Scanner sees the EXACT same curve as the Mesh Generator
-
 function getPinchFactor(y, centers, width, skew, theta, useMaxAngle = false) {
   let val = 0;
   for (let k = 0; k < centers.length; k++) {
@@ -17,13 +15,11 @@ function getPinchFactor(y, centers, width, skew, theta, useMaxAngle = false) {
     const g = Math.exp(-0.5 * (dy * dy) / (width * width));
     
     // For Safety Scan, we assume the WORST CASE angle (ang=1.0)
-    // For Mesh Gen, we use the actual angle
     let ang = 1.0;
     if (!useMaxAngle) {
       const rot = theta * skew + k * 1.7;
       ang = 0.5 + 0.5 * Math.cos(rot);
     }
-    
     val += g * ang;
   }
   return Math.min(1, val);
@@ -41,7 +37,11 @@ function apply(geometry, p) {
 
   const count   = clamp(Math.floor(p.m_ps_count ?? 3), 1, 12);
   const spread  = clamp(p.m_ps_spread_mm ?? 40, 10, 160);
-  const width   = clamp(p.m_ps_width_mm ?? 18, 6, 80);
+  
+  // Enforce a minimum width relative to spread to prevent razor-thin creases
+  // but allow user control.
+  let width     = clamp(p.m_ps_width_mm ?? 18, 6, 80);
+  
   let depth     = clamp(p.m_ps_depth ?? 0.35, 0, 0.95);
   const skew    = clamp(p.m_ps_theta_skew ?? 2.0, 0, 12);
   const easeMM  = clamp(p.m_ps_ease_bottom_mm ?? 10, 0, 80);
@@ -72,44 +72,36 @@ function apply(geometry, p) {
     centers.push(y0);
   }
 
-  // 2. HIGH-RES SAFETY SCAN
-  // We scan the curve every 0.5mm to find the steepest slope.
-  // We want the slope (derivative) to be < 0.8 (approx 40 degrees) to be safe.
+  // 2. AGGRESSIVE SAFETY SCAN
+  // We scan the curve every 0.2mm (high res).
+  // We target a slope of 0.55 (approx 29 degrees). 
+  // This leaves ~15 degrees margin for the lamp's own outward curvature.
   
   let maxGradient = 0;
-  const stepSize = 0.5; // High resolution scan
-  const eps = 0.1;      // Tiny epsilon for derivative accuracy
+  const stepSize = 0.2; 
+  const eps = 0.1;      
   
-  // Helper to get total normalized displacement (0..1) at height y
   const getDispRatio = (yVal) => {
     const e = getEaseFactor(yVal, bottomY, easeMM);
-    const pVal = getPinchFactor(yVal, centers, width, skew, 0, true); // useMaxAngle=true
+    const pVal = getPinchFactor(yVal, centers, width, skew, 0, true); 
     return e * pVal;
   };
 
   for (let y = minY; y <= maxY; y += stepSize) {
     const v1 = getDispRatio(y);
     const v2 = getDispRatio(y + eps);
-    // Slope = change in displacement / change in height
-    // Real Displacement = maxR * depth * ratio
-    // Real Gradient = maxR * depth * (v2-v1)/eps
     
-    // We only care about negative gradients (Outward slopes / Overhangs)
-    // Positive gradients are Inward slopes (Chamfers), which are safe.
-    // However, Pinch Stacks create both. The "return" from a pinch is an overhang.
+    // slopeRatio > 0 means the pinch is "returning" (overhang)
+    // slopeRatio < 0 means the pinch is "indenting" (safe chamfer)
+    const slopeRatio = (v1 - v2) / eps; 
     
-    const slopeRatio = (v1 - v2) / eps; // Inverted to catch "return" (v2 < v1) as positive spike
     if (slopeRatio > maxGradient) maxGradient = slopeRatio;
   }
 
   // 3. AUTO-LIMIT DEPTH
-  // Target Slope = 0.8 (approx 40 deg). Safe limit is 1.0 (45 deg).
-  // Real Slope = maxR * depth * maxGradient
-  // We want: maxR * depth * maxGradient <= 0.8
-  // So: depth <= 0.8 / (maxR * maxGradient)
-  
   if (maxGradient > 0.001) {
-    const safeSlopeLimit = 0.8; 
+    // Stricter limit: 0.55
+    const safeSlopeLimit = 0.55; 
     const maxAllowedDepth = safeSlopeLimit / (maxR * maxGradient);
     
     if (depth > maxAllowedDepth) {
@@ -117,7 +109,7 @@ function apply(geometry, p) {
     }
   }
 
-  // 4. APPLY DEFORMATION (SUBTRACTIVE)
+  // 4. APPLY DEFORMATION
   for (let i = 0; i < pos.count; i++) {
     let x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
     if (y <= bottomY) continue;
@@ -128,14 +120,13 @@ function apply(geometry, p) {
     let theta = Math.atan2(z, x);
     if (theta < 0) theta += Math.PI * 2;
 
-    // Calculate Exact Factors
     const pinch = getPinchFactor(y, centers, width, skew, theta, false);
     const ease = getEaseFactor(y, bottomY, easeMM);
     
     // Subtractive Displacement
     const displacement = maxR * depth * ease * pinch;
     
-    // Clamp to avoid inverted geometry (negative radius)
+    // Safety clamp to prevent geometry inversion
     const safeDisp = Math.min(displacement, r - 2); 
 
     const nx = x / r;
