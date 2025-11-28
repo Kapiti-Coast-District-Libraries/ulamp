@@ -185,7 +185,7 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     const bulbMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       emissive: new THREE.Color(lightBulbConfig.lightColor || "#ffaa00"),
-      emissiveIntensity: 50.0, 
+      emissiveIntensity: 0.0, 
       roughness: 0.1
     });
 
