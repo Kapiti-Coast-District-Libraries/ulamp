@@ -72,7 +72,7 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     scene.add(hemi);
     
     const key = new THREE.DirectionalLight(0xffffff, 1.0);
-    key.position.set(50, 100, 50);
+    key.position.set(50, 100, 150);
     key.castShadow = true; 
     key.shadow.mapSize.width = 1024;
     key.shadow.mapSize.height = 1024;
