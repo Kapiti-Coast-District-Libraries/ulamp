@@ -1,5 +1,4 @@
-// src/main.jsx
-import "./utils/patchExporter"; // <--- ADD THIS LINE AT THE TOP
+
 
 import React from 'react'
 import ReactDOM from 'react-dom/client'
