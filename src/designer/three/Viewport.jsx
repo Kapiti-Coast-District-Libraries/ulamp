@@ -55,7 +55,7 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     const h = mount.clientHeight || 600;
 
     const camera = new THREE.PerspectiveCamera(35, w / h, 0.1, 2000);
-    camera.position.set(0, 140, 360);
+    camera.position.set(0, 140, 560);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -72,7 +72,7 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     scene.add(hemi);
     
     const key = new THREE.DirectionalLight(0xffffff, 1.0);
-    key.position.set(50, 100, 150);
+    key.position.set(50, 50, 150);
     key.castShadow = true; 
     key.shadow.mapSize.width = 1024;
     key.shadow.mapSize.height = 1024;
@@ -185,7 +185,7 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     const bulbMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       emissive: new THREE.Color(lightBulbConfig.lightColor || "#ffaa00"),
-      emissiveIntensity: 2.0, 
+      emissiveIntensity: 50.0, 
       roughness: 0.1
     });
 
