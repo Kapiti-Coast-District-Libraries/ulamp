@@ -7,16 +7,32 @@ function smooth01(u) { const x = clamp(u, 0, 1); return x * x * (3 - 2 * x); }
 function fract(x) { return x - Math.floor(x); }
 function hash1(t) { return fract(Math.sin(t * 91.345) * 43758.5453); }
 
-// Helper to calculate the Gaussian envelope value at height y
-function getEnvelope(y, centers, width) {
+// --- UNIFIED MATH HELPERS ---
+// We extract the math so the Safety Scanner sees the EXACT same curve as the Mesh Generator
+
+function getPinchFactor(y, centers, width, skew, theta, useMaxAngle = false) {
   let val = 0;
-  // Sum of Gaussians (overlapping bands)
   for (let k = 0; k < centers.length; k++) {
     const dy = y - centers[k];
-    val += Math.exp(-0.5 * (dy * dy) / (width * width));
+    const g = Math.exp(-0.5 * (dy * dy) / (width * width));
+    
+    // For Safety Scan, we assume the WORST CASE angle (ang=1.0)
+    // For Mesh Gen, we use the actual angle
+    let ang = 1.0;
+    if (!useMaxAngle) {
+      const rot = theta * skew + k * 1.7;
+      ang = 0.5 + 0.5 * Math.cos(rot);
+    }
+    
+    val += g * ang;
   }
-  // Clamp to 1.0 max per point (soft cap) logic matches apply loop
   return Math.min(1, val);
+}
+
+function getEaseFactor(y, bottomY, easeMM) {
+  if (y >= bottomY + easeMM) return 1.0;
+  if (y <= bottomY) return 0.0;
+  return smooth01((y - bottomY) / Math.max(1e-6, easeMM));
 }
 
 function apply(geometry, p) {
@@ -56,36 +72,52 @@ function apply(geometry, p) {
     centers.push(y0);
   }
 
-  // 2. SAFETY PRE-PASS: CHECK SLOPE
-  // We simulate the displacement derivative.
-  // Displacement D(y) = maxR * depth * envelope(y).
-  // Slope S(y) = dD/dy.
-  // We want S(y) <= 1.0 (45 degrees).
-  // Therefore: maxR * depth * max(envelope'(y)) <= 1.0
-  // So: depth <= 1.0 / (maxR * maxGradient)
-
-  const steps = Math.ceil(height); // 1 sample per mm
-  let maxGradient = 0;
-  const eps = 1.0; // 1mm step for finite difference
+  // 2. HIGH-RES SAFETY SCAN
+  // We scan the curve every 0.5mm to find the steepest slope.
+  // We want the slope (derivative) to be < 0.8 (approx 40 degrees) to be safe.
   
-  for (let y = minY; y <= maxY; y += 2) { // check every 2mm
-    const v1 = getEnvelope(y, centers, width);
-    const v2 = getEnvelope(y + eps, centers, width);
-    const slope = Math.abs(v2 - v1) / eps;
-    if (slope > maxGradient) maxGradient = slope;
+  let maxGradient = 0;
+  const stepSize = 0.5; // High resolution scan
+  const eps = 0.1;      // Tiny epsilon for derivative accuracy
+  
+  // Helper to get total normalized displacement (0..1) at height y
+  const getDispRatio = (yVal) => {
+    const e = getEaseFactor(yVal, bottomY, easeMM);
+    const pVal = getPinchFactor(yVal, centers, width, skew, 0, true); // useMaxAngle=true
+    return e * pVal;
+  };
+
+  for (let y = minY; y <= maxY; y += stepSize) {
+    const v1 = getDispRatio(y);
+    const v2 = getDispRatio(y + eps);
+    // Slope = change in displacement / change in height
+    // Real Displacement = maxR * depth * ratio
+    // Real Gradient = maxR * depth * (v2-v1)/eps
+    
+    // We only care about negative gradients (Outward slopes / Overhangs)
+    // Positive gradients are Inward slopes (Chamfers), which are safe.
+    // However, Pinch Stacks create both. The "return" from a pinch is an overhang.
+    
+    const slopeRatio = (v1 - v2) / eps; // Inverted to catch "return" (v2 < v1) as positive spike
+    if (slopeRatio > maxGradient) maxGradient = slopeRatio;
   }
 
-  // Calculate maximum allowed depth to keep slope <= 1.0 (approx)
-  // We add a safety buffer (0.9 instead of 1.0)
+  // 3. AUTO-LIMIT DEPTH
+  // Target Slope = 0.8 (approx 40 deg). Safe limit is 1.0 (45 deg).
+  // Real Slope = maxR * depth * maxGradient
+  // We want: maxR * depth * maxGradient <= 0.8
+  // So: depth <= 0.8 / (maxR * maxGradient)
+  
   if (maxGradient > 0.001) {
-    const maxAllowedDepth = 0.9 / (maxR * maxGradient);
+    const safeSlopeLimit = 0.8; 
+    const maxAllowedDepth = safeSlopeLimit / (maxR * maxGradient);
+    
     if (depth > maxAllowedDepth) {
-      // console.warn(`Auto-reducing depth from ${depth} to ${maxAllowedDepth.toFixed(3)} for safety`);
       depth = maxAllowedDepth;
     }
   }
 
-  // 3. APPLY DEFORMATION
+  // 4. APPLY DEFORMATION (SUBTRACTIVE)
   for (let i = 0; i < pos.count; i++) {
     let x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
     if (y <= bottomY) continue;
@@ -96,34 +128,19 @@ function apply(geometry, p) {
     let theta = Math.atan2(z, x);
     if (theta < 0) theta += Math.PI * 2;
 
-    // Calculate Envelope
-    let pinch = 0;
-    for (let k = 0; k < centers.length; k++) {
-      const c = centers[k];
-      const dy = y - c;
-      const g = Math.exp(-0.5 * (dy * dy) / (width * width));
-      
-      const rot = theta * skew + k * 1.7;
-      const ang = 0.5 + 0.5 * Math.cos(rot);
-      pinch += g * ang;
-    }
-    pinch = Math.min(1, pinch);
-
-    const ease = y < bottomY + easeMM ? smooth01((y - bottomY) / Math.max(1e-6, easeMM)) : 1.0;
+    // Calculate Exact Factors
+    const pinch = getPinchFactor(y, centers, width, skew, theta, false);
+    const ease = getEaseFactor(y, bottomY, easeMM);
     
-    // CHANGE: Use Subtractive Displacement instead of Multiplicative Scaling
-    // This preserves wall thickness.
-    // We use maxR as the reference magnitude so the depth slider feels consistent.
+    // Subtractive Displacement
     const displacement = maxR * depth * ease * pinch;
-
-    // Don't push past the center (safety clamp)
+    
+    // Clamp to avoid inverted geometry (negative radius)
     const safeDisp = Math.min(displacement, r - 2); 
 
-    const ratio = safeDisp / r;
-    const nx = x / r; // normalized direction
+    const nx = x / r;
     const nz = z / r;
 
-    // Move point INWARDS by fixed distance
     x -= nx * safeDisp;
     z -= nz * safeDisp;
 
@@ -147,12 +164,9 @@ export default {
     m_ps_ease_bottom_mm: 10,
   },
   schema: [
-    // --- MAIN TEXTURE CONTROLS ---
     { key: "m_ps_count",      label: "Stack Count",      type: "range", min: 1, max: 12, step: 1, group: "Texture" },
     { key: "m_ps_depth",      label: "Pinch Strength",   type: "range", min: 0, max: 0.95, step: 0.01, group: "Texture" },
     { key: "m_ps_spread_mm",  label: "Spacing (mm)",     type: "range", min: 10, max: 160, step: 1, group: "Texture" },
-
-    // --- ADVANCED TEXTURE CONTROLS ---
     { key: "m_ps_width_mm",       label: "Pinch Softness",   type: "range", min: 6, max: 80, step: 1, group: "Texture", advanced: true },
     { key: "m_ps_theta_skew",     label: "Twist / Skew",     type: "range", min: 0, max: 12, step: 0.1, group: "Texture", advanced: true },
     { key: "m_ps_ease_bottom_mm", label: "Base Safe Zone",   type: "range", min: 0, max: 80, step: 1, group: "Texture", advanced: true },
