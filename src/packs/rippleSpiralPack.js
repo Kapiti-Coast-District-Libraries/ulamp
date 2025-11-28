@@ -8,7 +8,7 @@ import { textures, textureOptions } from "../textures";
 
 const MAX_SIZE = 240;
 const MIN_THICK = 0.8;
-const MAX_THICK = 1;
+const MAX_THICK = 1.6;
 const BOTTOM_THICK = 3;
 const FIXED_HOLE_DIAMETER = 80;
 
