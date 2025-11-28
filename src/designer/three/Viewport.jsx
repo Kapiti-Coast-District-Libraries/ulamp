@@ -1,3 +1,7 @@
+{
+type: uploaded file
+fileName: clarkwilliamsie/ulamp/ClarkWilliamsIE-ulamp-87ba34906a689405dd665c9fd363669f50c974b1/src/designer/three/Viewport.jsx
+fullContent:
 // src/designer/three/Viewport.jsx
 import React, { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import * as THREE from "three";
@@ -5,7 +9,7 @@ import { OrbitControls, STLLoader, STLExporter } from "three-stdlib";
 // Import ALL configs
 import { hiddenPartConfig, visualBaseConfig, lightBulbConfig } from "../../hiddenPart/config.js";
 
-const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = false }, ref) => {
+const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = false, analysisMode = false }, ref) => {
   const mountRef = useRef(null);
   
   const meshRef = useRef(null);      // 1. Lamp
@@ -248,20 +252,87 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     if (old) old.dispose();
   }, [builder, params]);
 
-  // Update Color
+  // Update Color & Analysis Mode
   useEffect(() => {
-    const c = new THREE.Color(color);
-    if (meshRef.current && meshRef.current.material) {
+    if (!meshRef.current) return;
+
+    if (analysisMode) {
+      // --- ANALYSIS MODE ---
+      // We calculate vertex colors based on the normal's Y component (slope)
+      const geom = meshRef.current.geometry;
+      if (!geom.attributes.color || geom.attributes.color.count !== geom.attributes.position.count) {
+        // Create color buffer if needed
+        const count = geom.attributes.position.count;
+        geom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+      }
+
+      const normals = geom.attributes.normal;
+      const colors = geom.attributes.color;
+      const pos = geom.attributes.position;
+      
+      const c1 = new THREE.Color("#44ff44"); // SAFE (Vertical)
+      const c2 = new THREE.Color("#ffff00"); // WARN (45 deg)
+      const c3 = new THREE.Color("#ff0000"); // DANGER (Flat/Overhang)
+
+      for (let i = 0; i < normals.count; i++) {
+        // Calculate slope: dot(normal, UP). 
+        // UP is (0,1,0). So dot is just normal.y
+        const ny = Math.abs(normals.getY(i));
+        const yPos = pos.getY(i);
+
+        // Ignore the very bottom or top caps if they are flat (optional)
+        // But generally, flat areas at the top are supported by the rest, 
+        // it's the ANGLED walls that are the issue.
+        
+        // ny = 0.0 -> Vertical Wall (Strong)
+        // ny = 0.707 -> 45 degrees (Limit)
+        // ny = 1.0 -> Horizontal (Weakest for thin walls)
+        
+        let c = new THREE.Color();
+        
+        // Map 0..1 to color ramp
+        if (ny < 0.5) {
+          // Mostly vertical -> Green to Yellow
+          c.lerpColors(c1, c2, ny * 2); 
+        } else {
+          // Mostly horizontal -> Yellow to Red
+          c.lerpColors(c2, c3, (ny - 0.5) * 2);
+        }
+
+        colors.setXYZ(i, c.r, c.g, c.b);
+      }
+      colors.needsUpdate = true;
+
+      meshRef.current.material.color.setHex(0xffffff); // White base for vertex colors
+      meshRef.current.material.vertexColors = true;
+      meshRef.current.material.roughness = 1.0;
+      meshRef.current.material.metalness = 0.0;
+      meshRef.current.material.needsUpdate = true;
+
+    } else {
+      // --- NORMAL MODE ---
+      const c = new THREE.Color(color);
+      meshRef.current.material.vertexColors = false;
       meshRef.current.material.color.set(c);
+      meshRef.current.material.roughness = 0.75;
+      meshRef.current.material.metalness = 0.05;
       meshRef.current.material.needsUpdate = true;
     }
+    
+    // Also update insert color to match plain color (or grey in analysis)
     if (insertRef.current && insertRef.current.material) {
-      insertRef.current.material.color.set(c);
+      if (analysisMode) {
+         insertRef.current.material.color.setHex(0x555555);
+      } else {
+         insertRef.current.material.color.set(color);
+      }
       insertRef.current.material.needsUpdate = true;
     }
-  }, [color]);
+
+  }, [color, analysisMode, builder, params]); // Re-run when geometry changes too
 
   return <div ref={mountRef} style={{ width: "100%", height: "100%" }} />;
 });
 
 export default Viewport;
+}
