@@ -1,10 +1,14 @@
+{
+type: uploaded file
+fileName: clarkwilliamsie/ulamp/ClarkWilliamsIE-ulamp-87ba34906a689405dd665c9fd363669f50c974b1/src/admin/AdminPage.jsx
+fullContent:
 // src/admin/AdminPage.jsx
 import React, { useState, useEffect, useMemo } from "react";
 import * as THREE from "three";
 import { packs } from "../packs";
 import { hiddenPartConfig } from "../hiddenPart/config.js";
 import Viewport from "../designer/three/Viewport.jsx";
-import AutoForm from "../designer/controls/AutoForm.jsx"; // <--- IMPORTED
+import AutoForm from "../designer/controls/AutoForm.jsx"; 
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
@@ -130,6 +134,9 @@ export default function AdminPage() {
   // New: Local state for editing parameters
   const [editParams, setEditParams] = useState({});
 
+  // NEW: Analysis Toggle
+  const [analysisMode, setAnalysisMode] = useState(false);
+
   // Load orders on mount
   useEffect(() => {
     setLoading(true);
@@ -176,6 +183,7 @@ export default function AdminPage() {
   // Sync editParams when order selection changes
   useEffect(() => {
     setEditParams(originalParams || {});
+    setAnalysisMode(false); // Reset analysis on new order
   }, [originalParams]);
 
   const pack = packs[packKey];
@@ -256,6 +264,14 @@ export default function AdminPage() {
               </div>
               <div className="toolbar-actions">
                 <button 
+                  className={`btn-analysis ${analysisMode ? 'active' : ''}`}
+                  onClick={() => setAnalysisMode(!analysisMode)}
+                  title="Visualize steep overhangs (Red = Weak)"
+                >
+                   {analysisMode ? "Hide Heatmap" : "⚠️ Check Safety"}
+                </button>
+
+                <button 
                   className="btn-download" 
                   onClick={onDownloadSTL} 
                   disabled={!canBuild || exporting}
@@ -269,12 +285,22 @@ export default function AdminPage() {
               {/* 3D PREVIEW - Uses editParams now */}
               <div className="admin-preview">
                 {canBuild ? (
-                  <Viewport 
-                    builder={model.build} 
-                    params={editParams} 
-                    color={editParams.colorHex || "#cccccc"} 
-                    autoSpin={true} 
-                  />
+                  <>
+                    <Viewport 
+                      builder={model.build} 
+                      params={editParams} 
+                      color={editParams.colorHex || "#cccccc"} 
+                      autoSpin={true} 
+                      analysisMode={analysisMode} 
+                    />
+                    {analysisMode && (
+                      <div className="legend">
+                        <div className="legend-item"><span style={{background: '#44ff44'}}></span>Safe (Vertical)</div>
+                        <div className="legend-item"><span style={{background: '#ffff00'}}></span>Caution (45°)</div>
+                        <div className="legend-item"><span style={{background: '#ff0000'}}></span>Danger (Flat)</div>
+                      </div>
+                    )}
+                  </>
                 ) : (
                   <div className="preview-error">
                     Model definition not found for {packKey}/{modelKey}
@@ -378,7 +404,12 @@ export default function AdminPage() {
         .admin-toolbar { background: #fff; padding: 12px 24px; border-bottom: 1px solid #e0e0e0; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
         .toolbar-info h3 { margin: 0; font-size: 20px; }
         .toolbar-info span { color: #666; font-size: 14px; }
+        .toolbar-actions { display: flex; gap: 10px; }
         
+        .btn-analysis { background: #fff; color: #333; border: 1px solid #ccc; padding: 10px 16px; border-radius: 6px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all 0.2s; }
+        .btn-analysis:hover { background: #f5f5f5; }
+        .btn-analysis.active { background: #ffeb3b; border-color: #fbc02d; color: #000; }
+
         .btn-download { background: #111; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 8px; }
         .btn-download:hover { background: #333; }
         .btn-download:disabled { opacity: 0.5; cursor: default; }
@@ -389,6 +420,11 @@ export default function AdminPage() {
         .admin-preview { position: relative; background: #e5e5e5; }
         .preview-error { display: grid; place-items: center; height: 100%; color: #666; }
         
+        .legend { position: absolute; bottom: 20px; left: 20px; background: rgba(0,0,0,0.7); padding: 10px; border-radius: 6px; color: #fff; font-size: 12px; pointer-events: none; }
+        .legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+        .legend-item:last-child { margin-bottom: 0; }
+        .legend-item span { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+
         /* Details Panel */
         .admin-details { background: #fff; border-left: 1px solid #e0e0e0; overflow-y: auto; padding: 20px; }
         .detail-card { margin-bottom: 24px; }
@@ -426,4 +462,5 @@ export default function AdminPage() {
       `}</style>
     </div>
   );
+}
 }
