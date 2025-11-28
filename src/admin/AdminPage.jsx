@@ -1,7 +1,3 @@
-{
-type: uploaded file
-fileName: clarkwilliamsie/ulamp/ClarkWilliamsIE-ulamp-87ba34906a689405dd665c9fd363669f50c974b1/src/admin/AdminPage.jsx
-fullContent:
 // src/admin/AdminPage.jsx
 import React, { useState, useEffect, useMemo } from "react";
 import * as THREE from "three";
@@ -9,9 +5,8 @@ import { packs } from "../packs";
 import { hiddenPartConfig } from "../hiddenPart/config.js";
 import Viewport from "../designer/three/Viewport.jsx";
 import AutoForm from "../designer/controls/AutoForm.jsx"; 
-import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
-import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
-import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+// FIXED IMPORTS: Use three-stdlib for better Vite compatibility
+import { STLLoader, STLExporter, mergeBufferGeometries } from "three-stdlib";
 
 // --- HELPER: Cached Hidden Part Loader ---
 const hiddenCache = { promise: null, geom: null };
@@ -120,8 +115,8 @@ async function buildMergedGeometry(builder, lampParams, includeHidden) {
     } catch (e) { console.error(e); }
   }
   
-  // Merge
-  const merged = mergeGeometries(geoms, true);
+  // Merge using three-stdlib (compatible)
+  const merged = mergeBufferGeometries(geoms, true);
   return merged || geoms[0];
 }
 
@@ -462,5 +457,4 @@ export default function AdminPage() {
       `}</style>
     </div>
   );
-}
 }
