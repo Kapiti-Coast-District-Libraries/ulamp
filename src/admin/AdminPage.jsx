@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { packs } from "../packs";
 import { hiddenPartConfig } from "../hiddenPart/config.js";
 import Viewport from "../designer/three/Viewport.jsx";
+import AutoForm from "../designer/controls/AutoForm.jsx"; // <--- IMPORTED
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
@@ -43,7 +44,7 @@ function transformHiddenGeometry(src) {
   // 2. Up Axis Correction
   if (config.upAxis === "Z") geometry.rotateX(-Math.PI / 2);
 
-  // 3. Dynamic Centering (The step that was missing!)
+  // 3. Dynamic Centering
   geometry.computeBoundingBox();
   const bbox = geometry.boundingBox;
   const center = new THREE.Vector3();
@@ -74,7 +75,7 @@ function transformHiddenGeometry(src) {
     geometry.translate(lx, ly, lz);
   }
 
-  // 7. World Position (Since we are merging geometries, we must bake the mesh position in)
+  // 7. World Position
   if (config.position) {
     const [px, py, pz] = config.position;
     geometry.translate(px, py, pz);
@@ -125,6 +126,9 @@ export default function AdminPage() {
   const [selectedId, setSelectedId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
+  
+  // New: Local state for editing parameters
+  const [editParams, setEditParams] = useState({});
 
   // Load orders on mount
   useEffect(() => {
@@ -144,8 +148,8 @@ export default function AdminPage() {
     orders.find((o) => o.id === selectedId) || null, 
   [orders, selectedId]);
 
-  // Parse params safely
-  const { packKey, modelKey, params, shipping } = useMemo(() => {
+  // Parse original params from order
+  const { packKey, modelKey, originalParams, shipping } = useMemo(() => {
     if (!selectedOrder) return {};
     let p = {};
     try {
@@ -164,21 +168,27 @@ export default function AdminPage() {
     return {
       packKey: selectedOrder.pack_key,
       modelKey: selectedOrder.model_key,
-      params: p || {},
+      originalParams: p || {},
       shipping: ship || {}
     };
   }, [selectedOrder]);
+
+  // Sync editParams when order selection changes
+  useEffect(() => {
+    setEditParams(originalParams || {});
+  }, [originalParams]);
 
   const pack = packs[packKey];
   const model = pack?.models?.[modelKey];
   const canBuild = !!(model && typeof model.build === "function");
 
+  // Use the EDITED params for download
   const onDownloadSTL = async () => {
     if (!canBuild || !selectedOrder) return;
     try {
       setExporting(true);
-      // Re-run builder with exact params + hidden part
-      const geom = await buildMergedGeometry(model.build, params, true);
+      // Re-run builder with edited params + hidden part
+      const geom = await buildMergedGeometry(model.build, editParams, true);
       const exporter = new STLExporter();
       const stlData = exporter.parse(new THREE.Mesh(geom), { binary: true });
       
@@ -193,6 +203,10 @@ export default function AdminPage() {
     } finally {
       setExporting(false);
     }
+  };
+
+  const handleReset = () => {
+    setEditParams(originalParams);
   };
 
   return (
@@ -252,13 +266,13 @@ export default function AdminPage() {
             </div>
 
             <div className="admin-content">
-              {/* 3D PREVIEW */}
+              {/* 3D PREVIEW - Uses editParams now */}
               <div className="admin-preview">
                 {canBuild ? (
                   <Viewport 
                     builder={model.build} 
-                    params={params} 
-                    color={params.colorHex || "#cccccc"} 
+                    params={editParams} 
+                    color={editParams.colorHex || "#cccccc"} 
                     autoSpin={true} 
                   />
                 ) : (
@@ -286,26 +300,44 @@ export default function AdminPage() {
                 </div>
 
                 <div className="detail-card">
-                  <h4>Design Specs</h4>
-                  <div className="specs-grid">
-                    <div className="spec">
-                      <label>Pack</label>
-                      <span>{packKey}</span>
-                    </div>
-                    <div className="spec">
-                      <label>Model</label>
-                      <span>{modelKey}</span>
-                    </div>
-                    {Object.entries(params).map(([key, val]) => {
-                      if (typeof val === 'object') return null; // skip objects
-                      return (
-                        <div className="spec" key={key}>
-                          <label>{key}</label>
-                          <span>{String(val)}</span>
-                        </div>
-                      );
-                    })}
+                  <div className="specs-header">
+                    <h4>Design Specs (Editable)</h4>
+                    {editParams !== originalParams && (
+                       <button className="reset-btn" onClick={handleReset}>↺ Reset</button>
+                    )}
                   </div>
+                  
+                  {/* Replaced static list with AutoForm */}
+                  {model && model.schema ? (
+                    <div className="admin-form-container">
+                       <AutoForm 
+                         schema={model.schema} 
+                         params={editParams} 
+                         setParams={setEditParams} 
+                       />
+                    </div>
+                  ) : (
+                    <div className="specs-grid">
+                      {/* Fallback if no schema found */}
+                      <div className="spec">
+                        <label>Pack</label>
+                        <span>{packKey}</span>
+                      </div>
+                      <div className="spec">
+                        <label>Model</label>
+                        <span>{modelKey}</span>
+                      </div>
+                      {Object.entries(editParams).map(([key, val]) => {
+                        if (typeof val === 'object') return null;
+                        return (
+                          <div className="spec" key={key}>
+                            <label>{key}</label>
+                            <span>{String(val)}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -360,11 +392,14 @@ export default function AdminPage() {
         /* Details Panel */
         .admin-details { background: #fff; border-left: 1px solid #e0e0e0; overflow-y: auto; padding: 20px; }
         .detail-card { margin-bottom: 24px; }
+        .specs-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 6px; margin-bottom: 12px; }
+        .specs-header h4 { margin: 0; font-size: 12px; text-transform: uppercase; color: #888; letter-spacing: 0.5px; border: none; padding: 0; }
         .detail-card h4 { margin: 0 0 12px 0; font-size: 12px; text-transform: uppercase; color: #888; letter-spacing: 0.5px; border-bottom: 1px solid #eee; padding-bottom: 6px; }
         
         .address-block p { margin: 2px 0; font-size: 14px; color: #333; }
         .muted { color: #999; font-size: 14px; font-style: italic; }
         
+        /* Fallback List Styles */
         .specs-grid { display: grid; grid-template-columns: 1fr; gap: 8px; }
         .spec { display: flex; justify-content: space-between; font-size: 13px; border-bottom: 1px dotted #eee; padding-bottom: 2px; }
         .spec label { color: #666; }
@@ -373,6 +408,21 @@ export default function AdminPage() {
         .no-selection { display: flex; justify-content: center; align-items: center; height: 100%; color: #999; font-size: 18px; }
         .loading { padding: 20px; text-align: center; color: #666; }
         .empty { padding: 20px; text-align: center; color: #888; font-style: italic; }
+
+        /* AutoForm Styles for Admin Context */
+        .reset-btn { font-size: 10px; cursor: pointer; background: transparent; border: 1px solid #ddd; border-radius: 4px; padding: 2px 6px; }
+        .reset-btn:hover { background: #f5f5f5; }
+        
+        .form-section { margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+        .section-title { font-weight: bold; margin-bottom: 10px; font-size: 13px; color: #555; }
+        .field { margin-bottom: 12px; }
+        .field label { display: block; font-size: 12px; color: #666; margin-bottom: 4px; font-weight: 500; }
+        .field input[type=range] { width: 100%; display: block; }
+        .field input[type=number], .field select { width: 100%; padding: 6px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; box-sizing: border-box; }
+        .field .value { font-size: 11px; color: #888; text-align: right; margin-top: 2px; }
+        .section-actions { display: flex; gap: 8px; margin-top: 10px; }
+        .btn-random, .btn-advanced { padding: 4px 8px; font-size: 11px; cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 4px; }
+        .btn-random:hover, .btn-advanced:hover { background: #f9f9f9; border-color: #bbb; }
       `}</style>
     </div>
   );
