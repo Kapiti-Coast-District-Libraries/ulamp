@@ -1,12 +1,7 @@
-{
-type: uploaded file
-fileName: clarkwilliamsie/ulamp/ClarkWilliamsIE-ulamp-87ba34906a689405dd665c9fd363669f50c974b1/src/designer/three/Viewport.jsx
-fullContent:
 // src/designer/three/Viewport.jsx
 import React, { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import * as THREE from "three";
-import { OrbitControls, STLLoader, STLExporter } from "three-stdlib";
-// Import ALL configs
+import { OrbitControls, STLExporter, STLLoader } from "three-stdlib";
 import { hiddenPartConfig, visualBaseConfig, lightBulbConfig } from "../../hiddenPart/config.js";
 
 const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = false, analysisMode = false }, ref) => {
@@ -87,12 +82,8 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     scene.add(rim);
 
     // --- Ground ---
-    // TRANSPARENT FLOOR (ShadowMaterial)
-    // Invisible plane that still catches shadows
     const floorGeo = new THREE.PlaneGeometry(2000, 2000);
-    const floorMat = new THREE.ShadowMaterial({ 
-      opacity: 0 // Opacity of the SHADOW, not the floor
-    });
+    const floorMat = new THREE.ShadowMaterial({ opacity: 0 });
     const floor = new THREE.Mesh(floorGeo, floorMat);
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -0.1;
@@ -179,7 +170,7 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
 
     // --- 3. Visual Stand ---
     const standMat = new THREE.MeshStandardMaterial({
-      color: 0x111111, // Black Stand
+      color: 0x111111,
       roughness: 0.4,
       metalness: 0.3
     });
@@ -257,57 +248,50 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
     if (!meshRef.current) return;
 
     if (analysisMode) {
-      // --- ANALYSIS MODE ---
-      // We calculate vertex colors based on the normal's Y component (slope)
+      // --- HEATMAP MODE ---
       const geom = meshRef.current.geometry;
       if (!geom.attributes.color || geom.attributes.color.count !== geom.attributes.position.count) {
-        // Create color buffer if needed
         const count = geom.attributes.position.count;
         geom.setAttribute('color', new THREE.BufferAttribute(new Float32Array(count * 3), 3));
       }
 
       const normals = geom.attributes.normal;
       const colors = geom.attributes.color;
-      const pos = geom.attributes.position;
       
-      const c1 = new THREE.Color("#44ff44"); // SAFE (Vertical)
-      const c2 = new THREE.Color("#ffff00"); // WARN (45 deg)
-      const c3 = new THREE.Color("#ff0000"); // DANGER (Flat/Overhang)
+      const cSafe = new THREE.Color("#44ff44");   // Vertical (Good)
+      const cWarn = new THREE.Color("#ffff00");   // 45 Deg (Okay)
+      const cDanger = new THREE.Color("#ff0000"); // Horizontal (Bad)
 
       for (let i = 0; i < normals.count; i++) {
-        // Calculate slope: dot(normal, UP). 
-        // UP is (0,1,0). So dot is just normal.y
-        const ny = Math.abs(normals.getY(i));
-        const yPos = pos.getY(i);
+        // Dot product with UP (0,1,0) is just the Y component
+        // 0 = Vertical, 1 = Horizontal
+        const slope = Math.abs(normals.getY(i)); 
 
-        // Ignore the very bottom or top caps if they are flat (optional)
-        // But generally, flat areas at the top are supported by the rest, 
-        // it's the ANGLED walls that are the issue.
-        
-        // ny = 0.0 -> Vertical Wall (Strong)
-        // ny = 0.707 -> 45 degrees (Limit)
-        // ny = 1.0 -> Horizontal (Weakest for thin walls)
-        
         let c = new THREE.Color();
-        
-        // Map 0..1 to color ramp
-        if (ny < 0.5) {
-          // Mostly vertical -> Green to Yellow
-          c.lerpColors(c1, c2, ny * 2); 
+        // Visual ramp: 0.0 -> Green, 0.7 -> Yellow, 1.0 -> Red
+        if (slope < 0.7) {
+           // Green to Yellow
+           c.lerpColors(cSafe, cWarn, slope / 0.7);
         } else {
-          // Mostly horizontal -> Yellow to Red
-          c.lerpColors(c2, c3, (ny - 0.5) * 2);
+           // Yellow to Red
+           c.lerpColors(cWarn, cDanger, (slope - 0.7) / 0.3);
         }
-
+        
         colors.setXYZ(i, c.r, c.g, c.b);
       }
       colors.needsUpdate = true;
 
-      meshRef.current.material.color.setHex(0xffffff); // White base for vertex colors
+      meshRef.current.material.color.setHex(0xffffff);
       meshRef.current.material.vertexColors = true;
-      meshRef.current.material.roughness = 1.0;
+      meshRef.current.material.roughness = 1.0; 
       meshRef.current.material.metalness = 0.0;
       meshRef.current.material.needsUpdate = true;
+
+      // Dim the insert so it doesn't distract
+      if (insertRef.current && insertRef.current.material) {
+        insertRef.current.material.color.setHex(0x333333);
+        insertRef.current.material.needsUpdate = true;
+      }
 
     } else {
       // --- NORMAL MODE ---
@@ -317,22 +301,15 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
       meshRef.current.material.roughness = 0.75;
       meshRef.current.material.metalness = 0.05;
       meshRef.current.material.needsUpdate = true;
-    }
-    
-    // Also update insert color to match plain color (or grey in analysis)
-    if (insertRef.current && insertRef.current.material) {
-      if (analysisMode) {
-         insertRef.current.material.color.setHex(0x555555);
-      } else {
-         insertRef.current.material.color.set(color);
+      
+      if (insertRef.current && insertRef.current.material) {
+        insertRef.current.material.color.set(c);
+        insertRef.current.material.needsUpdate = true;
       }
-      insertRef.current.material.needsUpdate = true;
     }
-
-  }, [color, analysisMode, builder, params]); // Re-run when geometry changes too
+  }, [color, analysisMode, builder, params]);
 
   return <div ref={mountRef} style={{ width: "100%", height: "100%" }} />;
 });
 
 export default Viewport;
-}
