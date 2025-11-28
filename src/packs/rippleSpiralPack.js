@@ -137,7 +137,8 @@ function constrainParams(pIn = {}, caps = PREVIEW_CAPS) {
   out.gyroidFreq      = clamp(pIn.gyroidFreq ?? 0.9, 0.2, 3);
   out.gyroidPhaseDeg  = clamp(pIn.gyroidPhaseDeg ?? 0, 0, 360);
   out.gyroidThreshold = clamp(pIn.gyroidThreshold ?? 0.15, 0, 0.9);
-  out.gyroidSharp     = clamp(pIn.gyroidSharp ?? 3, 1, 12);
+  // Slightly reduce default sharpness to help with smoothness
+  out.gyroidSharp     = clamp(pIn.gyroidSharp ?? 2.5, 1, 12);
   out.inwardDepthMM   = clamp(pIn.inwardDepthMM ?? 3.0, 0, 10);
   out.depthTopScale   = clamp(pIn.depthTopScale ?? 0.4, 0, 1);
 
@@ -153,18 +154,18 @@ function constrainParams(pIn = {}, caps = PREVIEW_CAPS) {
   out._wallForLathe = clamp(out.wall / Math.max(1e-6, minS), MIN_THICK, 3.0);
 
   out.radialSegments = recommendedRadialSegments(out, caps);
-  out.resolution     = recommendedResolution(out, caps);
+  out.resolution      = recommendedResolution(out, caps);
 
   out.bottom_thickness = BOTTOM_THICK;
   out._holeRadius = FIXED_HOLE_DIAMETER * 0.5;
-  
+   
   // Hardcode to false/true as preferred, but removed from UI
   out.autoSpin = false; 
-  
+   
   return out;
 }
 
-/* build with two pass slope guard (45 degrees enforced) */
+/* build with two pass slope guard (45 degrees enforced) AND smoothing */
 function buildGyroidGlow(params, caps = PREVIEW_CAPS) {
   const p = constrainParams(params, caps);
 
@@ -173,8 +174,8 @@ function buildGyroidGlow(params, caps = PREVIEW_CAPS) {
   geom.computeVertexNormals();
 
   const H = p.height;
-  const N = p.resolution;
-  const A = p.radialSegments;
+  const N = p.resolution; // Vertical segments
+  const A = p.radialSegments; // Angular segments
   const dy = H / N;
 
   const rBase = new Array(N + 1);
@@ -183,6 +184,7 @@ function buildGyroidGlow(params, caps = PREVIEW_CAPS) {
     rBase[i] = rOuterAt(t, p);
   }
 
+  // --- Pass 1: Raw calculation ---
   const dRaw = Array.from({ length: N + 1 }, () => new Float32Array(A));
   for (let i = 0; i <= N; i++) {
     const t = i / N;
@@ -193,27 +195,73 @@ function buildGyroidGlow(params, caps = PREVIEW_CAPS) {
     }
   }
 
-  // Pass 2: Clamp outward growth to 45 degrees
-  const dClamped = Array.from({ length: N + 1 }, () => new Float32Array(A));
+  // --- Pass 2: Clamp outward growth to 45 degrees (Slope Guard) ---
+  // We use a double buffer approach here to ensure the slope guard propagation works correctly
+  let dClamped = Array.from({ length: N + 1 }, () => new Float32Array(A));
+  
   for (let a = 0; a < A; a++) {
-    const rEff0 = Math.max(0.5, rBase[0] - dRaw[0][a]);
+    // Initialize bottom row
     dClamped[0][a] = clamp(dRaw[0][a], 0, rBase[0] - 0.2);
-    let lastEff = rEff0;
+    let lastEff = Math.max(0.5, rBase[0] - dClamped[0][a]);
 
     for (let i = 1; i <= N; i++) {
       const rOut = rBase[i];
       const desired = Math.max(0.5, rOut - dRaw[i][a]);
-      
+       
       // The Magic: Limit radius growth to 'dy' per step (1:1 slope = 45 degrees)
       const maxAllowed = lastEff + dy;
       const eff = Math.min(desired, maxAllowed);
-      
+       
       const d = clamp(rOut - eff, 0, rOut - 0.2);
       dClamped[i][a] = d;
       lastEff = Math.max(0.5, rOut - d);
     }
   }
 
+  // --- Pass 3: Smoothing (NEW) ---
+  // This applies a 3x3 box blur to the displacement grid to ensure sleek transitions.
+  // Two passes provides a very sleek result.
+  const smoothPasses = 2;
+  const dSmoothed = Array.from({ length: N + 1 }, () => new Float32Array(A));
+  
+  // Start with the clamped data
+  for(let i = 0; i <= N; i++) dSmoothed[i].set(dClamped[i]);
+
+  // Temporary buffer for the smoothing operation
+  const dBuffer = Array.from({ length: N + 1 }, () => new Float32Array(A));
+
+  for (let pass = 0; pass < smoothPasses; pass++) {
+    // Copy current smoothed state to buffer to read from
+    for(let i = 0; i <= N; i++) dBuffer[i].set(dSmoothed[i]);
+
+    for (let i = 0; i <= N; i++) {
+        for (let a = 0; a < A; a++) {
+            let sum = 0;
+            let count = 0;
+
+            // Iterate over 3x3 neighborhood around [i][a]
+            for (let di = -1; di <= 1; di++) {
+                const ni = i + di;
+                // Vertical boundaries: clamp (don't read past top/bottom)
+                if (ni < 0 || ni > N) continue;
+
+                for (let da = -1; da <= 1; da++) {
+                    let na = a + da;
+                    // Radial boundaries: wrap around (cylinder geometry)
+                    if (na < 0) na = A - 1;
+                    else if (na >= A) na = 0;
+
+                    sum += dBuffer[ni][na];
+                    count++;
+                }
+            }
+            // Average the neighborhood
+            dSmoothed[i][a] = sum / count;
+        }
+    }
+  }
+
+  // --- Final Pass: Apply smoothed displacement to vertices ---
   const pos = geom.attributes.position;
   const v = new THREE.Vector3();
 
@@ -235,7 +283,8 @@ function buildGyroidGlow(params, caps = PREVIEW_CAPS) {
 
     const { iT, iA } = indexForVertex(v.x, v.y, v.z);
     const r = Math.hypot(v.x, v.z);
-    const d = dClamped[iT][iA];
+    // Use the SMOOTHED displacement values
+    const d = dSmoothed[iT][iA]; 
     const s = scaleFromOffset(r, d);
     v.x *= s; v.z *= s;
 
@@ -243,6 +292,7 @@ function buildGyroidGlow(params, caps = PREVIEW_CAPS) {
   }
 
   pos.needsUpdate = true;
+  // Recompute normals after deformation for correct shading
   geom.computeVertexNormals();
 
   const entry = textures[p.texture];
@@ -262,7 +312,7 @@ function schemaFor(params) {
     { key: "gyroidFreq",      label: "Pattern Density", type: "range", min: 0.2, max: 3, step: 0.01, group: "Pattern" },
     { key: "gyroidThreshold", label: "Window Openness", type: "range", min: 0, max: 0.9, step: 0.01, group: "Pattern" },
     { key: "inwardDepthMM",   label: "Indent Depth",    type: "range", min: 0, max: 2, step: 0.1, group: "Pattern" },
-    
+     
     // Advanced Pattern
     { key: "gyroidPhaseDeg",  label: "Pattern Shift",   type: "range", min: 0, max: 360, step: 1, group: "Pattern", advanced: true },
     { key: "gyroidSharp",     label: "Edge Sharpness",  type: "range", min: 1, max: 12, step: 0.1, group: "Pattern", advanced: true },
