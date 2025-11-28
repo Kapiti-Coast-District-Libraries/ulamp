@@ -1,5 +1,4 @@
-// src/textures/orbitOffset.js
-// (Internal ID: pinchStacks)
+// src/textures/pinchStacks.js
 import * as THREE from "three";
 
 const MAX_DIAMETER_MM = 240;
@@ -13,21 +12,41 @@ function apply(geometry, p) {
   if (!pos) return geometry;
 
   const count   = clamp(Math.floor(p.m_ps_count ?? 3), 1, 12);
-  const spread  = clamp(p.m_ps_spread_mm ?? 40, 10, 160);    // distance between pinch bands
-  const width   = clamp(p.m_ps_width_mm ?? 18, 6, 80);       // gaussian width
-  const depth   = clamp(p.m_ps_depth ?? 0.35, 0, 0.95);      // fraction of local radius pulled in
-  const skew    = clamp(p.m_ps_theta_skew ?? 2.0, 0, 12);    // adds angular bias so pinches are not circular
+  const spread  = clamp(p.m_ps_spread_mm ?? 40, 10, 160);
+  // We'll calculate effective width later to enforce safety
+  const userWidth = clamp(p.m_ps_width_mm ?? 18, 6, 80);
+  const depth   = clamp(p.m_ps_depth ?? 0.35, 0, 0.95);
+  const skew    = clamp(p.m_ps_theta_skew ?? 2.0, 0, 12);
   const easeMM  = clamp(p.m_ps_ease_bottom_mm ?? 10, 0, 80);
 
-  // find height range
+  // 1. Analyze Geometry Bounds
   let minY = Infinity, maxY = -Infinity;
+  let maxR = 0; // Needed for slope safety calc
+  
   for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
     const y = pos.getY(i);
+    const z = pos.getZ(i);
     if (y < minY) minY = y;
     if (y > maxY) maxY = y;
+    
+    const r = Math.hypot(x, z);
+    if (r > maxR) maxR = r;
   }
+  
   const height = Math.max(1e-6, maxY - minY);
   const bottomY = (p.bottom_thickness ?? 3) + 0.1;
+
+  // 2. SAFETY ENFORCEMENT (The "45 Degree Rule")
+  // Max Slope of Gaussian = approx 0.6 * Amplitude / Width
+  // Amplitude approx = maxR * depth
+  // We want Max Slope <= 1.0 (45 degrees)
+  // So: Width >= 0.6 * maxR * depth
+  const minSafeWidth = 0.6 * maxR * depth;
+  
+  // Use the safer of the two widths. 
+  // This prevents the user from creating unprintable overhangs unintentionally.
+  const width = Math.max(userWidth, minSafeWidth);
 
   // build band centers
   const centers = [];
@@ -45,13 +64,14 @@ function apply(geometry, p) {
     let theta = Math.atan2(z, x);
     if (theta < 0) theta += Math.PI * 2;
 
-    // accumulate inward factor from each band
+    // accumulate inward factor
     let pinch = 0;
     for (let k = 0; k < centers.length; k++) {
       const c = centers[k];
       const dy = y - c;
-      const g = Math.exp(-0.5 * (dy * dy) / (width * width));  // 0..1
-      // angular bias, makes each band pinch hardest on a rotating angle
+      // Use the SAFE width here
+      const g = Math.exp(-0.5 * (dy * dy) / (width * width));
+      
       const rot = theta * skew + k * 1.7;
       const ang = 0.5 + 0.5 * Math.cos(rot);
       pinch += g * ang;
@@ -61,7 +81,7 @@ function apply(geometry, p) {
     const ease = y < bottomY + easeMM ? smooth01((y - bottomY) / Math.max(1e-6, easeMM)) : 1.0;
     const kPull = depth * ease * pinch;
 
-    // scale radius inward, never negative
+    // scale radius inward
     const s = Math.max(0.05, 1 - kPull);
     x *= s; z *= s;
 
