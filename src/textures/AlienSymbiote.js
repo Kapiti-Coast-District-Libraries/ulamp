@@ -10,7 +10,6 @@ function smoothstep(edge0, edge1, x) {
 }
 
 // --- FAST SIMPLEX-LIKE NOISE ---
-// Self-contained noise function to ensure the "organic" look
 const PERM = new Uint8Array(512);
 const GRAD3 = [
   1,1,0, -1,1,0, 1,-1,0, -1,-1,0,
@@ -18,7 +17,7 @@ const GRAD3 = [
   0,1,1, 0,-1,1, 0,1,-1, 0,-1,-1
 ];
 
-let seed = 666; // Spooky seed
+let seed = 666; 
 function random() {
   seed = (Math.imul(1664525, seed) + 1013904223) >>> 0;
   return seed / 4294967296.0;
@@ -39,7 +38,7 @@ function noise3D(x, y, z) {
   const u = x*x*x*(x*(x*6-15)+10);
   const v = y*y*y*(y*(y*6-15)+10);
   const w = z*z*z*(z*(z*6-15)+10);
-  
+   
   const A = PERM[X]+Y, AA = PERM[A]+Z, AB = PERM[A+1]+Z;
   const B = PERM[X+1]+Y, BA = PERM[B]+Z, BB = PERM[B+1]+Z;
 
@@ -60,36 +59,36 @@ function noise3D(x, y, z) {
   );
 }
 
-// --- RIDGED NOISE (The "Vein" look) ---
-// Instead of smooth hills, we flip the negative values up to create sharp valleys,
-// then invert it to make sharp ridges.
+// --- RIDGED NOISE ---
 function ridgedNoise(x, y, z, scale, gain) {
   let n = noise3D(x * scale, y * scale, z * scale); 
-  // Map 0..1 to -1..1
   n = (n - 0.5) * 2.0;
-  // Absolute value creates the sharp "V" shape
   n = 1.0 - Math.abs(n);
-  // Sharpen the peak
-  n = n * n;
+  n = n * n; // Sharpen
   return n * gain;
 }
 
 function apply(geometry, p) {
   const pos = geometry.attributes.position;
-  const nor = geometry.attributes.normal;
-  if (!pos || !nor) return geometry;
+  // We don't strictly need normals for displacement, but good to have check
+  if (!pos) return geometry;
 
   // Params
   const scale = clamp(p.t_bio_scale ?? 25, 5, 100);
   const depth = clamp(p.t_bio_depth ?? 3.0, 0, 8.0);
-  const creep = p.t_bio_creep ?? 0;   // Vertical flow
-  const slime = clamp(p.t_bio_slime ?? 1.5, 0.5, 3.0); // Thickness/Gooeyness
-  const complex = clamp(p.t_bio_complex ?? 1, 1, 3); // Octaves
+  const creep = p.t_bio_creep ?? 0;   
+  const slime = clamp(p.t_bio_slime ?? 1.5, 0.5, 3.0); 
+  const complex = clamp(p.t_bio_complex ?? 1, 1, 3); 
 
   const freq = 1.0 / scale;
   const bottomY = (p.bottom_thickness ?? 3) + 0.1;
   const maxRadius = MAX_DIAMETER_MM / 2;
   const height = p.height ?? 220;
+  
+  // Wall calculation params to detect Inner vs Outer surface
+  const rBase = p.baseRadius ?? 116;
+  const rTop = p.topRadius ?? 92;
+  const wall = p.wall ?? 1.2;
 
   const v = new THREE.Vector3();
   const radial = new THREE.Vector3();
@@ -99,8 +98,22 @@ function apply(geometry, p) {
 
     if (v.y <= bottomY) continue;
 
+    // --- NEW: Inner vs Outer Logic ---
+    // 1. Calculate where the outer wall *should* be at this height
+    const t = clamp(v.y / height, 0, 1);
+    const idealOuterR = rBase + (rTop - rBase) * t;
+    
+    // 2. Define a boundary line halfway through the wall
+    const boundary = idealOuterR - (wall * 0.5);
+    
+    // 3. Get current vertex radius
     radial.set(v.x, 0, v.z);
     const r = radial.length();
+
+    // 4. If radius is smaller than boundary, it's the INSIDE wall. Skip it.
+    if (r < boundary) continue;
+
+    // --- Proceed with Texture (Outer Only) ---
     if (r < 1e-6) continue;
     radial.multiplyScalar(1 / r);
 
@@ -109,29 +122,24 @@ function apply(geometry, p) {
     let ny = v.y * freq;
     let nz = v.z * freq;
 
-    // 1. Creep (Flow)
-    // Moves the texture up/down to simulate growth direction
+    // 1. Creep
     ny -= creep * (v.y / height) * 5.0;
 
-    // 2. Domain Warping (The "Liquid" feel)
-    // We offset the coordinate with another noise layer first.
-    // This makes the veins wiggle and meander naturally.
+    // 2. Domain Warping
     const warp = 0.5;
     const wx = noise3D(nx * 0.5, ny * 0.5, nz * 0.5) * warp;
     const wy = noise3D(nx * 0.5 + 10, ny * 0.5 + 10, nz * 0.5 + 10) * warp;
     const wz = noise3D(nx * 0.5 + 20, ny * 0.5 + 20, nz * 0.5 + 20) * warp;
-    
+     
     nx += wx; ny += wy; nz += wz;
 
     // 3. Multi-fractal Ridged Noise
     let signal = 0;
     let amp = 1.0;
     let f = 1.0;
-    
-    // Main vein layer
+     
     signal += ridgedNoise(nx, ny, nz, f, amp);
-    
-    // Detailed capillaries layer
+     
     if (complex >= 2) {
       f *= 2.0; amp *= 0.5;
       signal += ridgedNoise(nx, ny, nz, f, amp);
@@ -141,29 +149,20 @@ function apply(geometry, p) {
       signal += ridgedNoise(nx, ny, nz, f, amp);
     }
 
-    // 4. "Slime" function (Thresholding)
-    // This cuts off the bottom of the signal to create distinct, raised tubes
-    // rather than a bumpy hill.
-    // Map signal (roughly 0..1.5) to a sharp cutoff
-    
-    // Normalize roughly
+    // 4. Slime Thresholding
     let shape = signal / 1.5; 
-    
-    // Apply contrast/threshold (Slime factor)
     shape = Math.pow(shape, slime); 
-    
-    // Smooth clip to ensure it doesn't jag
     shape = smoothstep(0.1, 0.9, shape);
 
-    // 5. Apply
+    // 5. Apply (Emboss outwards)
+    // We restrict push so it doesn't exceed max printer size
     const slack = Math.max(0, maxRadius - r);
     const push = Math.min(depth, slack) * shape;
 
-    // Bottom Fade
-    const fadeMM = 8;
-    if (fadeMM > 0) {
+    // Bottom Fade (prevents hard edge at bottom slab)
+    const fadeMM = 15; // Increased fade for smoother transition
+    if (v.y < bottomY + fadeMM) {
        const u = clamp((v.y - bottomY) / fadeMM, 0, 1);
-       // ease in
        const fade = u * u * (3 - 2 * u);
        v.addScaledVector(radial, push * fade);
     } else {
@@ -191,9 +190,9 @@ export default {
   schema: [
     { key: "t_bio_scale",   label: "Vein Size",      type: "range", min: 10,  max: 80, step: 1, group: "Texture" },
     { key: "t_bio_depth",   label: "Vein Height",    type: "range", min: 0,   max: 8.0, step: 0.1, group: "Texture" },
-    { key: "t_bio_slime",   label: "Thickness",      type: "range", min: 0.5, max: 4.0, step: 0.1, group: "Texture" }, // Controls how "fat" the veins are
+    { key: "t_bio_slime",   label: "Thickness",      type: "range", min: 0.5, max: 4.0, step: 0.1, group: "Texture" },
     { key: "t_bio_creep",   label: "Flow Direction", type: "range", min: -1.0,max: 1.0, step: 0.1, group: "Texture" },
-    
+     
     { key: "t_bio_complex", label: "Detail Level",   type: "range", min: 1,   max: 3,   step: 1, group: "Texture", advanced: true },
   ],
   headroom: (p) => clamp(p.t_bio_depth ?? 3.5, 0, 8.0),
