@@ -14,7 +14,7 @@ const FIXED_HOLE_DIAMETER = 80;
 function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
 
 const PREVIEW_CAPS = { maxRadial: 720, maxRes: 900, stepMM: 0.6 };
-const EXPORT_CAPS  = { maxRadial: 1400, maxRes: 1600, stepMM: 0.35 };
+const EXPORT_CAPS  = { maxRadial: 400, maxRes: 600, stepMM: 0.55 };
 
 /* ---------- Detail heuristics ---------- */
 
