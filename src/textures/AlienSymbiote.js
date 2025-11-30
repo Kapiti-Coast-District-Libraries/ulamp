@@ -30,7 +30,7 @@ for(let i=0; i<255; i++) {
   PERM[i + 256] = PERM[i];
 }
 
-function dot(g, x, y, z) { return g[0]*x + g[1]*y + g[2]*z; }
+function dotVec(g, x, y, z) { return g[0]*x + g[1]*y + g[2]*z; }
 
 function noise3D(x, y, z) {
   const X = Math.floor(x) & 255, Y = Math.floor(y) & 255, Z = Math.floor(z) & 255;
@@ -48,14 +48,14 @@ function noise3D(x, y, z) {
   const gAB1= (PERM[AB+1] % 12)*3; const gBB1= (PERM[BB+1] % 12)*3;
 
   return 0.5 + 0.5 * (
-    (1-w) * ((1-v) * ((1-u) * dot([GRAD3[gAA],GRAD3[gAA+1],GRAD3[gAA+2]], x, y, z) + 
-                       u * dot([GRAD3[gBA],GRAD3[gBA+1],GRAD3[gBA+2]], x-1, y, z)) +
-             v * ((1-u) * dot([GRAD3[gAB],GRAD3[gAB+1],GRAD3[gAB+2]], x, y-1, z) +
-                   u * dot([GRAD3[gBB],GRAD3[gBB+1],GRAD3[gBB+2]], x-1, y-1, z))) +
-    w * ((1-v) * ((1-u) * dot([GRAD3[gAA1],GRAD3[gAA1+1],GRAD3[gAA1+2]], x, y, z-1) + 
-                   u * dot([GRAD3[gBA1],GRAD3[gBA1+1],GRAD3[gBA1+2]], x-1, y, z-1)) +
-         v * ((1-u) * dot([GRAD3[gAB1],GRAD3[gAB1+1],GRAD3[gAB1+2]], x, y-1, z-1) +
-               u * dot([GRAD3[gBB1],GRAD3[gBB1+1],GRAD3[gBB1+2]], x-1, y-1, z-1)))
+    (1-w) * ((1-v) * ((1-u) * dotVec([GRAD3[gAA],GRAD3[gAA+1],GRAD3[gAA+2]], x, y, z) + 
+                       u * dotVec([GRAD3[gBA],GRAD3[gBA+1],GRAD3[gBA+2]], x-1, y, z)) +
+             v * ((1-u) * dotVec([GRAD3[gAB],GRAD3[gAB+1],GRAD3[gAB+2]], x, y-1, z) +
+                   u * dotVec([GRAD3[gBB],GRAD3[gBB+1],GRAD3[gBB+2]], x-1, y-1, z))) +
+    w * ((1-v) * ((1-u) * dotVec([GRAD3[gAA1],GRAD3[gAA1+1],GRAD3[gAA1+2]], x, y, z-1) + 
+                   u * dotVec([GRAD3[gBA1],GRAD3[gBA1+1],GRAD3[gBA1+2]], x-1, y, z-1)) +
+         v * ((1-u) * dotVec([GRAD3[gAB1],GRAD3[gAB1+1],GRAD3[gAB1+2]], x, y-1, z-1) +
+               u * dotVec([GRAD3[gBB1],GRAD3[gBB1+1],GRAD3[gBB1+2]], x-1, y-1, z-1)))
   );
 }
 
@@ -70,7 +70,8 @@ function ridgedNoise(x, y, z, scale, gain) {
 
 function apply(geometry, p) {
   const pos = geometry.attributes.position;
-  if (!pos) return geometry;
+  const nor = geometry.attributes.normal; // We need normals for this improved technique
+  if (!pos || !nor) return geometry;
 
   // Params
   const scale = clamp(p.t_bio_scale ?? 25, 5, 100);
@@ -84,12 +85,8 @@ function apply(geometry, p) {
   const maxRadius = MAX_DIAMETER_MM / 2;
   const height = p.height ?? 220;
   
-  // Wall calculation params
-  const rBase = p.baseRadius ?? 116;
-  const rTop = p.topRadius ?? 92;
-  const wall = p.wall ?? 1.2;
-
   const v = new THREE.Vector3();
+  const n = new THREE.Vector3(); // Normal vector placeholder
   const radial = new THREE.Vector3();
 
   for (let i = 0; i < pos.count; i++) {
@@ -97,30 +94,29 @@ function apply(geometry, p) {
 
     if (v.y <= bottomY) continue;
 
-    // --- Soft Inner/Outer Logic ---
-    const t = clamp(v.y / height, 0, 1);
-    const idealOuterR = rBase + (rTop - rBase) * t;
-    
-    // The "middle" of the wall
-    const boundary = idealOuterR - (wall * 0.5);
-    
     radial.set(v.x, 0, v.z);
     const r = radial.length();
-
-    // --- MASK CALCULATION ---
-    // Instead of "if (r < boundary) continue", we calculate a blend factor.
-    // 0.0 = Inside (No Texture)
-    // 1.0 = Outside (Full Texture)
-    // We blend over a 1.5mm distance to prevent "tearing" or "holes".
-    const blendDist = 1.5; 
-    const mask = smoothstep(boundary - blendDist, boundary + 0.2, r);
-
-    // If mask is 0, we are deep inside the lamp, skip math
-    if (mask <= 0.001) continue;
-
     if (r < 1e-6) continue;
-    radial.multiplyScalar(1 / r);
+    radial.multiplyScalar(1 / r); // Normalized radial direction (pointing outwards horizontally)
 
+    // --- NEW: Normal-based Masking ---
+    n.fromBufferAttribute(nor, i);
+    
+    // Calculate dot product between surface normal and outward radial direction.
+    // +1 = Facing directly outwards (Outer wall)
+    // -1 = Facing directly inwards (Inner wall)
+    // ~0 = Facing up or down (Rims)
+    const dot = n.x * radial.x + n.z * radial.z;
+
+    // Create a smooth mask. We only want surfaces facing significantly outwards.
+    // Transitioning from 0.1 to 0.4 ensures the rims and inner wall remain perfectly clean.
+    const mask = smoothstep(0.1, 0.4, dot);
+
+    // If mask is 0, it's inner wall or rim. Skip math completely.
+    if (mask <= 0.0001) continue;
+
+
+    // --- Texture Math ---
     // Coordinates
     let nx = v.x * freq;
     let ny = v.y * freq;
@@ -160,7 +156,7 @@ function apply(geometry, p) {
 
     // 5. Apply
     const slack = Math.max(0, maxRadius - r);
-    // Multiply by 'mask' to ensure smooth transition from inner wall to texture
+    // Multiply by our new smooth normal-based mask
     const push = Math.min(depth, slack) * shape * mask;
 
     // Bottom Fade
@@ -177,6 +173,7 @@ function apply(geometry, p) {
   }
 
   pos.needsUpdate = true;
+  // Important: We must recompute normals after deforming the mesh
   geometry.computeVertexNormals();
   return geometry;
 }
