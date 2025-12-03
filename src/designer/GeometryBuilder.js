@@ -1,5 +1,6 @@
 // src/designer/GeometryBuilder.js
 import * as THREE from "three";
+import { mergeBufferGeometries } from "three-stdlib";
 
 /**
  * Creates a watertight cylindrical grid optimized for displacement.
@@ -18,7 +19,6 @@ export function buildWatertightCylinder({
   // We need (resolution + 1) rings
   // We need (radialSegments) columns. 
   // NOTE: For a watertight mesh, the last column wraps to the FIRST index.
-  // We do NOT create duplicate vertices for UVs because this is for physical manufacturing.
   
   const numRings = resolution + 1;
   const numCols = radialSegments; 
@@ -71,28 +71,31 @@ export function buildWatertightCylinder({
   }
 
   // 4. Build Geometry
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geometry.setIndex(indices);
+  const shellGeo = new THREE.BufferGeometry();
+  shellGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  shellGeo.setIndex(indices);
 
-  // 5. Add Bottom Cap (Solid Slab with Hole)
-  // We construct a simple flat ring at Y=0 and Y=BottomThickness
-  // And loft them. This is appended to the geometry.
-  addSolidBase(geometry, holeRadius, radiusFunction(0), bottomThickness, radialSegments);
+  // 5. Build Bottom Cap (Solid Slab with Hole)
+  // We create a separate geometry for the base and merge it safely.
+  const baseGeo = createSolidBase(holeRadius, radiusFunction(0), bottomThickness, radialSegments);
 
-  geometry.computeVertexNormals();
-  return geometry;
+  // 6. Merge Safely
+  // FIX: Use mergeBufferGeometries to avoid stack overflow on large arrays
+  const merged = mergeBufferGeometries([shellGeo, baseGeo], false);
+
+  // Clean up intermediate geometries to free memory
+  shellGeo.dispose();
+  baseGeo.dispose();
+
+  // 7. Final Polish
+  merged.computeVertexNormals();
+  return merged;
 }
 
 /**
- * Appends a solid base with a hole to the existing geometry.
- * This effectively "closes" the bottom of the lamp.
+ * Creates a standalone geometry for the solid base slab.
  */
-function addSolidBase(geometry, rInner, rOuter, thick, segments) {
-  // We need to merge this new geometry into the existing one.
-  // Ideally, we'd build it in the main loop, but appending is safer for clarity.
-  
-  const baseGeo = new THREE.BufferGeometry();
+function createSolidBase(rInner, rOuter, thick, segments) {
   const verts = [];
   const idx = [];
   
@@ -101,8 +104,6 @@ function addSolidBase(geometry, rInner, rOuter, thick, segments) {
   // 1: Outer Floor (y=0)
   // 2: Outer Ceiling (y=thick)
   // 3: Inner Ceiling (y=thick)
-  
-  const startIdx = 0;
   
   for (let i = 0; i < segments; i++) {
     const theta = (i / segments) * Math.PI * 2;
@@ -142,32 +143,8 @@ function addSolidBase(geometry, rInner, rOuter, thick, segments) {
     idx.push(base + 3, nextBase + 3, nextBase + 0);
   }
   
-  baseGeo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-  baseGeo.setIndex(idx);
-  
-  // Merge
-  const merged = import("three-stdlib").then(({ mergeBufferGeometries }) => {
-     // NOTE: We can't do async merge inside the sync builder easily.
-     // For simplicity, we will just return the main shell for now 
-     // or you can use BufferGeometryUtils.mergeBufferGeometries([geometry, baseGeo])
-     // if available.
-  });
-  
-  // MANUAL MERGE for simplicity and no dependencies
-  const pos1 = geometry.attributes.position.array;
-  const idx1 = geometry.index.array;
-  const pos2 = baseGeo.attributes.position.array;
-  const idx2 = baseGeo.index.array;
-  
-  const newPos = new Float32Array(pos1.length + pos2.length);
-  newPos.set(pos1);
-  newPos.set(pos2, pos1.length);
-  
-  const newIdx = [];
-  newIdx.push(...idx1);
-  const offset = pos1.length / 3;
-  for(let i=0; i<idx2.length; i++) newIdx.push(idx2[i] + offset);
-  
-  geometry.setAttribute('position', new THREE.BufferAttribute(newPos, 3));
-  geometry.setIndex(newIdx);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  geo.setIndex(idx);
+  return geo;
 }
