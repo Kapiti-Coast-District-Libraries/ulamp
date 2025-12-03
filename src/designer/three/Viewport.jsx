@@ -1,7 +1,7 @@
 // src/designer/three/Viewport.jsx
 import React, { useEffect, useRef, useImperativeHandle, forwardRef } from "react";
 import * as THREE from "three";
-import { OrbitControls, STLExporter, STLLoader } from "three-stdlib";
+import { OrbitControls, STLExporter, STLLoader, mergeVertices } from "three-stdlib";
 import { hiddenPartConfig, visualBaseConfig, lightBulbConfig } from "../../hiddenPart/config.js";
 
 const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = false, analysisMode = false }, ref) => {
@@ -27,8 +27,24 @@ const Viewport = forwardRef(({ builder, params, color = "#dddddd", autoSpin = fa
       const exporter = new STLExporter();
       const exportGroup = new THREE.Group();
 
-      if (meshRef.current) exportGroup.add(meshRef.current.clone());
-      if (insertRef.current) exportGroup.add(insertRef.current.clone());
+      // 1. Process the Main Lamp Mesh
+      if (meshRef.current) {
+        // Clone so we don't mess up the visual scene
+        const meshClone = meshRef.current.clone();
+        
+        // FIX: Merge vertices to seal any cracks or unwelded edges
+        // This makes the mesh "watertight" for 3D printing slicers
+        const mergedGeom = mergeVertices(meshClone.geometry);
+        mergedGeom.computeVertexNormals();
+        meshClone.geometry = mergedGeom;
+        
+        exportGroup.add(meshClone);
+      }
+
+      // 2. Process the Insert
+      if (insertRef.current) {
+        exportGroup.add(insertRef.current.clone());
+      }
 
       if (exportGroup.children.length === 0) {
         alert("Nothing to export!");
