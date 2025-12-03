@@ -1,4 +1,4 @@
-// src/textures/alienSymbiote.js
+// src/textures/AlienSymbiote.js
 import * as THREE from "three";
 
 const MAX_DIAMETER_MM = 240;
@@ -63,7 +63,10 @@ function ridgedNoise(x, y, z, scale, gain) {
 
 function apply(geometry, p) {
   const pos = geometry.attributes.position;
-  if (!pos) return geometry;
+  // FIX: Access the normal attribute so we can push perpendicularly
+  const norms = geometry.attributes.normal;
+  
+  if (!pos || !norms) return geometry;
 
   // Params
   const scale = clamp(p.t_bio_scale ?? 25, 5, 100);
@@ -74,43 +77,32 @@ function apply(geometry, p) {
 
   const freq = 1.0 / scale;
   const bottomY = (p.bottom_thickness ?? 3) + 0.1;
-  const maxRadius = MAX_DIAMETER_MM / 2;
   const height = p.height ?? 220;
   
   // Wall calculation params
   const rBase = p.baseRadius ?? 116;
   const rTop = p.topRadius ?? 92;
-  const wall = p.wall ?? 1.2;
 
   const v = new THREE.Vector3();
-  const radial = new THREE.Vector3();
+  const normal = new THREE.Vector3();
 
   for (let i = 0; i < pos.count; i++) {
     v.fromBufferAttribute(pos, i);
+    normal.fromBufferAttribute(norms, i);
 
     if (v.y <= bottomY) continue;
 
-    radial.set(v.x, 0, v.z);
-    const r = radial.length();
+    // Radius for masking logic only
+    const rCurrent = Math.hypot(v.x, v.z);
 
-    // --- ROBUST MASKING (Fixes Tearing) ---
+    // --- ROBUST MASKING ---
     const t = clamp(v.y / height, 0, 1);
     const idealOuterR = rBase + (rTop - rBase) * t;
-    
-    // We define a "Safe Zone" slightly inside the ideal outer radius.
     const boundary = idealOuterR - 0.4;
-    
-    // FIX: Previously this blended over 0.2mm.
-    // The mesh faces are ~1.5mm wide.
-    // This caused the mask to snap from 0 to 1 inside a single polygon, creating jagged "teeth".
-    // We now blend over 3.5mm to ensure a smooth transition across multiple polygons.
-    const mask = smoothstep(boundary - 3.5, boundary, r);
+    const mask = smoothstep(boundary - 3.5, boundary, rCurrent);
 
     // Skip if completely inside
     if (mask <= 0.001) continue;
-
-    if (r < 1e-6) continue;
-    radial.multiplyScalar(1 / r);
 
     // --- Noise Coordinates ---
     let nx = v.x * freq;
@@ -150,18 +142,18 @@ function apply(geometry, p) {
     shape = smoothstep(0.1, 0.9, shape);
 
     // Apply
-    const slack = Math.max(0, maxRadius - r);
-    // Apply Mask
-    const push = Math.min(depth, slack) * shape * mask;
+    // FIX: Push along the NORMAL, not the Radial Vector.
+    // This allows the texture to follow the pleats/curves properly.
+    const push = depth * shape * mask;
 
     // Bottom Fade
     const fadeMM = 15; 
     if (v.y < bottomY + fadeMM) {
        const u = clamp((v.y - bottomY) / fadeMM, 0, 1);
        const fade = u * u * (3 - 2 * u);
-       v.addScaledVector(radial, push * fade);
+       v.addScaledVector(normal, push * fade);
     } else {
-       v.addScaledVector(radial, push);
+       v.addScaledVector(normal, push);
     }
 
     pos.setXYZ(i, v.x, v.y, v.z);
