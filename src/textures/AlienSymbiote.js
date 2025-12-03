@@ -1,4 +1,4 @@
-// src/textures/AlienSymbiote.js
+// src/textures/alienSymbiote.js
 import * as THREE from "three";
 
 const MAX_DIAMETER_MM = 240;
@@ -52,108 +52,137 @@ function noise3D(x, y, z) {
   );
 }
 
-// --- RIDGED NOISE ---
-function ridgedNoise(x, y, z, scale, gain) {
-  let n = noise3D(x * scale, y * scale, z * scale); 
+// --- NOISE FLAVORS ---
+
+// 1. Veins (Sharp Valleys/Ridges)
+// Looks like roots or lightning
+function ridgedNoise(x, y, z) {
+  let n = noise3D(x, y, z); 
+  // Map 0..1 to -1..1
   n = (n - 0.5) * 2.0;
+  // Absolute value makes "bounces" (ridges)
   n = 1.0 - Math.abs(n);
-  n = n * n; 
-  return n * gain;
+  // Sharpen
+  return n * n; 
+}
+
+// 2. Flesh/Muscle (Round Bulges)
+// Looks like clouds, bubbles, or inflated balloons
+function billowyNoise(x, y, z) {
+  let n = noise3D(x, y, z);
+  // Map 0..1 to -1..1
+  n = (n - 0.5) * 2.0;
+  // Abs value creates round lobes
+  return Math.abs(n);
 }
 
 function apply(geometry, p) {
   const pos = geometry.attributes.position;
-  // FIX: Access the normal attribute so we can push perpendicularly
-  const norms = geometry.attributes.normal;
-  
-  if (!pos || !norms) return geometry;
+  if (!pos) return geometry;
 
   // Params
-  const scale = clamp(p.t_bio_scale ?? 25, 5, 100);
-  const depth = clamp(p.t_bio_depth ?? 3.0, 0, 8.0);
-  const creep = p.t_bio_creep ?? 0;   
-  const slime = clamp(p.t_bio_slime ?? 1.5, 0.5, 3.0); 
-  const complex = clamp(p.t_bio_complex ?? 1, 1, 3); 
+  const scale = clamp(p.t_bio_scale ?? 30, 10, 100);
+  const depth = clamp(p.t_bio_depth ?? 4.0, 0, 10.0); // Increased max depth
+  const creep = p.t_bio_creep ?? 0.2;   
+  const inflation = clamp(p.t_bio_slime ?? 2.0, 0.1, 4.0); // Renamed "slime" to controls
+  const complexity = clamp(p.t_bio_complex ?? 2, 1, 3); 
 
   const freq = 1.0 / scale;
   const bottomY = (p.bottom_thickness ?? 3) + 0.1;
+  const maxRadius = MAX_DIAMETER_MM / 2;
   const height = p.height ?? 220;
   
-  // Wall calculation params
   const rBase = p.baseRadius ?? 116;
   const rTop = p.topRadius ?? 92;
 
   const v = new THREE.Vector3();
-  const normal = new THREE.Vector3();
+  const radial = new THREE.Vector3();
 
   for (let i = 0; i < pos.count; i++) {
     v.fromBufferAttribute(pos, i);
-    normal.fromBufferAttribute(norms, i);
 
+    // Skip bottom solid plate
     if (v.y <= bottomY) continue;
 
-    // Radius for masking logic only
-    const rCurrent = Math.hypot(v.x, v.z);
-
-    // --- ROBUST MASKING ---
+    radial.set(v.x, 0, v.z);
+    const r = radial.length();
+    
+    // --- MASKING ---
+    // Smooth transition from base cylinder to texture
     const t = clamp(v.y / height, 0, 1);
     const idealOuterR = rBase + (rTop - rBase) * t;
     const boundary = idealOuterR - 0.4;
-    const mask = smoothstep(boundary - 3.5, boundary, rCurrent);
+    // Blend over 4mm for a very gentle rise
+    const mask = smoothstep(boundary - 4.0, boundary, r);
 
-    // Skip if completely inside
     if (mask <= 0.001) continue;
 
-    // --- Noise Coordinates ---
+    radial.normalize();
+
+    // --- COORDS ---
     let nx = v.x * freq;
     let ny = v.y * freq;
     let nz = v.z * freq;
 
-    // Creep
+    // Upward Flow (Creep)
     ny -= creep * (v.y / height) * 5.0;
 
-    // Domain Warping
-    const warp = 0.5;
-    const wx = noise3D(nx * 0.5, ny * 0.5, nz * 0.5) * warp;
-    const wy = noise3D(nx * 0.5 + 10, ny * 0.5 + 10, nz * 0.5 + 10) * warp;
-    const wz = noise3D(nx * 0.5 + 20, ny * 0.5 + 20, nz * 0.5 + 20) * warp;
-     
-    nx += wx; ny += wy; nz += wz;
+    // Domain Warping (Distortion)
+    // This makes the shape look "twisted" and organic
+    const warp = 0.6;
+    const wx = noise3D(nx, ny, nz) * warp;
+    const wy = noise3D(nx + 10, ny + 10, nz + 10) * warp;
+    const wz = noise3D(nx + 20, ny + 20, nz + 20) * warp;
+    
+    const dnx = nx + wx; 
+    const dny = ny + wy; 
+    const dnz = nz + wz;
 
-    // Multi-fractal Ridged Noise
-    let signal = 0;
-    let amp = 1.0;
-    let f = 1.0;
-     
-    signal += ridgedNoise(nx, ny, nz, f, amp);
-     
-    if (complex >= 2) {
-      f *= 2.0; amp *= 0.5;
-      signal += ridgedNoise(nx, ny, nz, f, amp);
+    // --- COMPOSITING LAYERS ---
+
+    // Layer 1: INFLATION (The "Meat")
+    // Low frequency, big round shapes. Pushes the surface OUT.
+    let muscle = billowyNoise(dnx, dny, dnz);
+    
+    // Layer 2: VEINS (The "Structure")
+    // High frequency, sharp ridges. Sits on top of the muscle.
+    let veins = ridgedNoise(dnx * 2.0, dny * 2.0, dnz * 2.0);
+
+    // Layer 3: DETAIL (Micro-texture)
+    let grit = 0;
+    if (complexity >= 2) {
+      grit = ridgedNoise(dnx * 4.0, dny * 4.0, dnz * 4.0) * 0.5;
     }
-    if (complex >= 3) {
-      f *= 2.0; amp *= 0.25;
-      signal += ridgedNoise(nx, ny, nz, f, amp);
-    }
 
-    // Slime Thresholding
-    let shape = signal / 1.5; 
-    shape = Math.pow(shape, slime); 
-    shape = smoothstep(0.1, 0.9, shape);
+    // --- BLENDING ---
+    // We mix them: Mostly muscle, with veins popping out
+    // "inflation" param controls how "puffy" the muscle is
+    
+    // Base swell
+    let signal = muscle * inflation; 
+    
+    // Add veins (they add height on top of the swell)
+    signal += veins * 0.8;
+    signal += grit * 0.3;
 
-    // Apply
-    // FIX: Push along the NORMAL, not the Radial Vector.
-    // This allows the texture to follow the pleats/curves properly.
-    const push = depth * shape * mask;
+    // Normalize roughly to 0..1 range
+    signal = signal / (inflation + 1.1);
 
-    // Bottom Fade
+    // Apply Soft Curve
+    signal = smoothstep(0.1, 1.0, signal);
+
+    // Calculate final push
+    const slack = Math.max(0, maxRadius - r);
+    const push = Math.min(depth, slack) * signal * mask;
+
+    // Bottom Fade-in (15mm)
     const fadeMM = 15; 
     if (v.y < bottomY + fadeMM) {
        const u = clamp((v.y - bottomY) / fadeMM, 0, 1);
        const fade = u * u * (3 - 2 * u);
-       v.addScaledVector(normal, push * fade);
+       v.addScaledVector(radial, push * fade);
     } else {
-       v.addScaledVector(normal, push);
+       v.addScaledVector(radial, push);
     }
 
     pos.setXYZ(i, v.x, v.y, v.z);
@@ -167,14 +196,15 @@ function apply(geometry, p) {
 export default {
   id: "alienSymbiote",
   label: "Alien Symbiote",
-  defaults: { t_bio_scale: 30, t_bio_depth: 3.5, t_bio_creep: 0.2, t_bio_slime: 1.8, t_bio_complex: 2 },
+  // Updated defaults for a "Pumped" look
+  defaults: { t_bio_scale: 25, t_bio_depth: 5.0, t_bio_creep: 0.3, t_bio_slime: 2.5, t_bio_complex: 2 },
   schema: [
-    { key: "t_bio_scale",   label: "Vein Size",      type: "range", min: 10,  max: 80, step: 1, group: "Texture" },
-    { key: "t_bio_depth",   label: "Vein Height",    type: "range", min: 0,   max: 8.0, step: 0.1, group: "Texture" },
-    { key: "t_bio_slime",   label: "Thickness",      type: "range", min: 0.5, max: 4.0, step: 0.1, group: "Texture" },
+    { key: "t_bio_scale",   label: "Feature Size",   type: "range", min: 10,  max: 80, step: 1, group: "Texture" },
+    { key: "t_bio_depth",   label: "Push Strength",  type: "range", min: 0,   max: 12.0,step: 0.1, group: "Texture" },
+    { key: "t_bio_slime",   label: "Inflation",      type: "range", min: 0.5, max: 4.0, step: 0.1, group: "Texture" },
     { key: "t_bio_creep",   label: "Flow Direction", type: "range", min: -1.0,max: 1.0, step: 0.1, group: "Texture" },
     { key: "t_bio_complex", label: "Detail Level",   type: "range", min: 1,   max: 3,   step: 1, group: "Texture", advanced: true },
   ],
-  headroom: (p) => clamp(p.t_bio_depth ?? 3.5, 0, 8.0),
+  headroom: (p) => clamp(p.t_bio_depth ?? 5.0, 0, 12.0),
   apply,
 };
