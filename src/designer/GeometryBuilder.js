@@ -3,142 +3,207 @@ import * as THREE from "three";
 import { mergeBufferGeometries } from "three-stdlib";
 
 /**
- * Creates a watertight cylindrical grid optimized for displacement.
- * - Welds the seam (0° and 360° share the same Vertex Index).
- * - Distributes vertical rings evenly to avoid "stretched" triangles.
+ * Creates a watertight solid cylinder with physical wall thickness.
+ * Generates Outer Shell, Inner Shell, Rims, and Base Plug.
  */
 export function buildWatertightCylinder({
   height = 200,
   radialSegments = 120,
-  resolution = 200, // Vertical segments
-  radiusFunction = (t) => 50, // Default cylinder
+  resolution = 200,
+  radiusFunction = (t) => 50,
   bottomThickness = 3,
-  holeRadius = 40
+  holeRadius = 40,
+  wallThickness = 0 // If 0, generates a single surface (Vase Mode)
 }) {
-  // 1. Buffers
-  // We need (resolution + 1) rings
-  // We need (radialSegments) columns. 
-  // NOTE: For a watertight mesh, the last column wraps to the FIRST index.
+  const isSolid = wallThickness > 0;
   
+  // 1. Generate the Main Cylinder (Wall)
+  // If solid, this includes Outer + Inner walls + Top/Bottom Rims
+  const wallGeo = buildWallGeometry({
+    height, radialSegments, resolution, radiusFunction, wallThickness, isSolid
+  });
+
+  // 2. Generate the Base Plug
+  // This fills the hole at the bottom.
+  // If solid, it fills from Hole -> Inner Wall.
+  // If surface, it fills from Hole -> Outer Wall.
+  const baseOuterR = radiusFunction(0) - (isSolid ? wallThickness : 0);
+  
+  // Safety: Ensure plug doesn't invert if wall is huge
+  const safeBaseOuterR = Math.max(holeRadius + 0.1, baseOuterR);
+  
+  const baseGeo = createSolidBase(holeRadius, safeBaseOuterR, bottomThickness, radialSegments);
+
+  // 3. Merge Wall and Base
+  const merged = mergeBufferGeometries([wallGeo, baseGeo], false);
+
+  // Clean up
+  wallGeo.dispose();
+  baseGeo.dispose();
+
+  merged.computeVertexNormals();
+  return merged;
+}
+
+function buildWallGeometry({ height, radialSegments, resolution, radiusFunction, wallThickness, isSolid }) {
   const numRings = resolution + 1;
-  const numCols = radialSegments; 
-  const vertexCount = numRings * numCols;
+  const numCols = radialSegments;
   
-  const positions = new Float32Array(vertexCount * 3);
+  // If solid, we need 2x vertices (Outer + Inner)
+  const numVerts = isSolid ? (numRings * numCols * 2) : (numRings * numCols);
+  
+  const positions = new Float32Array(numVerts * 3);
   const indices = [];
 
-  // 2. Generate Vertices
+  // --- VERTICES ---
   for (let yStep = 0; yStep < numRings; yStep++) {
-    const t = yStep / resolution; // 0.0 to 1.0
+    const t = yStep / resolution;
     const y = t * height;
-    
-    // Get base radius from the Shape Function
-    const r = radiusFunction(t);
+    const rOuter = radiusFunction(t);
+    const rInner = rOuter - wallThickness;
 
     for (let col = 0; col < numCols; col++) {
       const theta = (col / numCols) * Math.PI * 2;
+      const c = Math.cos(theta);
+      const s = Math.sin(theta);
+
+      // Index for Outer Vertex
+      const iOuter = (yStep * numCols) + col;
       
-      const px = r * Math.cos(theta);
-      const pz = r * Math.sin(theta);
-      
-      const i = (yStep * numCols) + col;
-      
-      positions[i * 3 + 0] = px;
-      positions[i * 3 + 1] = y;
-      positions[i * 3 + 2] = pz;
+      // Set Outer
+      positions[iOuter * 3 + 0] = rOuter * c;
+      positions[iOuter * 3 + 1] = y;
+      positions[iOuter * 3 + 2] = rOuter * s;
+
+      if (isSolid) {
+        // Index for Inner Vertex (offset by total outer verts)
+        const iInner = iOuter + (numRings * numCols);
+        
+        // Set Inner
+        positions[iInner * 3 + 0] = rInner * c;
+        positions[iInner * 3 + 1] = y;
+        positions[iInner * 3 + 2] = rInner * s;
+      }
     }
   }
 
-  // 3. Generate Indices (Topology)
-  // This creates the "Watertight" bond. 
-  // We connect column (N-1) back to column (0).
+  // --- INDICES ---
+  const ringStride = numCols;
+  const layerOffset = numRings * numCols; // Jump to Inner Layer
+
   for (let yStep = 0; yStep < resolution; yStep++) {
     for (let col = 0; col < numCols; col++) {
-      const nextCol = (col + 1) % numCols; // WRAP AROUND (Weld)
+      const nextCol = (col + 1) % numCols;
       
-      const currentRing = yStep * numCols;
-      const nextRing = (yStep + 1) * numCols;
+      const currentRing = yStep * ringStride;
+      const nextRing = (yStep + 1) * ringStride;
 
+      // Outer Face Indices
       const a = currentRing + col;
       const b = nextRing + col;
       const c = nextRing + nextCol;
       const d = currentRing + nextCol;
 
-      // Two triangles: ABC and ACD
+      // Outer Wall (CCW)
       indices.push(a, b, d);
       indices.push(b, c, d);
+
+      if (isSolid) {
+        // Inner Face Indices (Shifted by layerOffset)
+        const ai = a + layerOffset;
+        const bi = b + layerOffset;
+        const ci = c + layerOffset;
+        const di = d + layerOffset;
+
+        // Inner Wall (CW - Facing Inward)
+        indices.push(ai, di, bi);
+        indices.push(bi, di, ci);
+      }
     }
   }
 
-  // 4. Build Geometry
-  const shellGeo = new THREE.BufferGeometry();
-  shellGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  shellGeo.setIndex(indices);
+  // --- RIMS (Closing the Solid) ---
+  if (isSolid) {
+    // Top Rim (Connect Outer Top to Inner Top)
+    const topOuterStart = (resolution) * ringStride;
+    const topInnerStart = topOuterStart + layerOffset;
+    
+    // Bottom Rim (Connect Outer Bottom to Inner Bottom)
+    // Note: The Base Plug connects to the Inner Bottom, 
+    // but we need to close the annulus of the wall itself at y=0.
+    const botOuterStart = 0;
+    const botInnerStart = layerOffset;
 
-  // 5. Build Bottom Cap (Solid Slab with Hole)
-  // We create a separate geometry for the base and merge it safely.
-  const baseGeo = createSolidBase(holeRadius, radiusFunction(0), bottomThickness, radialSegments);
+    for (let col = 0; col < numCols; col++) {
+      const nextCol = (col + 1) % numCols;
 
-  // 6. Merge Safely
-  // FIX: Use mergeBufferGeometries to avoid stack overflow on large arrays
-  const merged = mergeBufferGeometries([shellGeo, baseGeo], false);
+      // Top Rim
+      {
+        const ao = topOuterStart + col;
+        const bo = topOuterStart + nextCol;
+        const ai = topInnerStart + col;
+        const bi = topInnerStart + nextCol;
+        // Face Up
+        indices.push(ao, bo, ai);
+        indices.push(bo, bi, ai);
+      }
 
-  // Clean up intermediate geometries to free memory
-  shellGeo.dispose();
-  baseGeo.dispose();
+      // Bottom Rim
+      {
+        const ao = botOuterStart + col;
+        const bo = botOuterStart + nextCol;
+        const ai = botInnerStart + col;
+        const bi = botInnerStart + nextCol;
+        // Face Down (Reversed)
+        indices.push(ao, ai, bo);
+        indices.push(bo, ai, bi);
+      }
+    }
+  }
 
-  // 7. Final Polish
-  merged.computeVertexNormals();
-  return merged;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  return geo;
 }
 
 /**
- * Creates a standalone geometry for the solid base slab.
+ * Creates a standalone geometry for the solid base plug.
  */
 function createSolidBase(rInner, rOuter, thick, segments) {
   const verts = [];
   const idx = [];
   
-  // We need 4 rings: 
-  // 0: Inner Floor (y=0)
-  // 1: Outer Floor (y=0)
-  // 2: Outer Ceiling (y=thick)
-  // 3: Inner Ceiling (y=thick)
-  
+  // 4 Rings: InnerBottom, OuterBottom, OuterTop, InnerTop
   for (let i = 0; i < segments; i++) {
     const theta = (i / segments) * Math.PI * 2;
     const c = Math.cos(theta);
     const s = Math.sin(theta);
     
-    // Ring 0: Inner Bottom
-    verts.push(rInner * c, 0, rInner * s);
-    // Ring 1: Outer Bottom
-    verts.push(rOuter * c, 0, rOuter * s);
-    // Ring 2: Outer Top
-    verts.push(rOuter * c, thick, rOuter * s);
-    // Ring 3: Inner Top
-    verts.push(rInner * c, thick, rInner * s);
+    verts.push(rInner * c, 0, rInner * s);     // 0
+    verts.push(rOuter * c, 0, rOuter * s);     // 1
+    verts.push(rOuter * c, thick, rOuter * s); // 2
+    verts.push(rInner * c, thick, rInner * s); // 3
   }
   
-  // Faces
   for (let i = 0; i < segments; i++) {
     const next = (i + 1) % segments;
     const base = i * 4;
     const nextBase = next * 4;
     
-    // Floor (0 -> 1)
+    // Bottom
     idx.push(base + 0, nextBase + 1, base + 1);
     idx.push(base + 0, nextBase + 0, nextBase + 1);
     
-    // Outer Wall (1 -> 2)
+    // Outer Side
     idx.push(base + 1, nextBase + 2, base + 2);
     idx.push(base + 1, nextBase + 1, nextBase + 2);
     
-    // Ceiling (2 -> 3)
+    // Top
     idx.push(base + 2, nextBase + 3, base + 3);
     idx.push(base + 2, nextBase + 2, nextBase + 3);
     
-    // Inner Wall (3 -> 0)
+    // Inner Side
     idx.push(base + 3, nextBase + 0, base + 0);
     idx.push(base + 3, nextBase + 3, nextBase + 0);
   }
