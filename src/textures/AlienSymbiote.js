@@ -94,23 +94,17 @@ function apply(geometry, p) {
     const r = radial.length();
 
     // --- ROBUST MASKING (Fixes Tearing) ---
-    // Instead of normals (which change at seams) or strict radius (which creates cliffs),
-    // we use a "Fuzzy Radius" approach.
-    
-    // 1. Where should the OUTER wall be?
     const t = clamp(v.y / height, 0, 1);
     const idealOuterR = rBase + (rTop - rBase) * t;
     
-    // 2. Define the "Safe Zone"
-    // Anything within 0.4mm of the outer wall is considered "Outside".
-    // Anything deeper is "Inside".
+    // We define a "Safe Zone" slightly inside the ideal outer radius.
     const boundary = idealOuterR - 0.4;
     
-    // 3. Smoothstep Mask
-    // 0 = Inside (Clean)
-    // 1 = Outside (Textured)
-    // We blend over 0.2mm. This is tight enough to be sharp, loose enough to be manifold.
-    const mask = smoothstep(boundary - 0.2, boundary, r);
+    // FIX: Previously this blended over 0.2mm.
+    // The mesh faces are ~1.5mm wide.
+    // This caused the mask to snap from 0 to 1 inside a single polygon, creating jagged "teeth".
+    // We now blend over 3.5mm to ensure a smooth transition across multiple polygons.
+    const mask = smoothstep(boundary - 3.5, boundary, r);
 
     // Skip if completely inside
     if (mask <= 0.001) continue;
