@@ -14,7 +14,9 @@ const FIXED_HOLE_DIAMETER = 80;
 function clamp(v, a, b) { return Math.min(b, Math.max(a, v)); }
 
 const PREVIEW_CAPS = { maxRadial: 720, maxRes: 900, stepMM: 0.6 };
-const EXPORT_CAPS  = { maxRadial: 400, maxRes: 600, stepMM: 0.55 };
+// FIX 1: Increased export limits significantly (was 400/600)
+// This ensures the exported file is smooth, not "low poly"
+const EXPORT_CAPS  = { maxRadial: 1200, maxRes: 1400, stepMM: 0.4 };
 
 /* ---------- Detail heuristics ---------- */
 
@@ -303,10 +305,17 @@ export const models = {
 };
 
 function exportSTL(params) {
-  import("three-stdlib").then(({ STLExporter }) => {
+  // FIX 2: Import mergeVertices to weld seams
+  import("three-stdlib").then(({ STLExporter, mergeVertices }) => {
+    // FIX 1 (Applied): Use the higher EXPORT_CAPS
     const geom = buildPleatedUmbrella(params, EXPORT_CAPS);
+    
+    // FIX 2 (Applied): Merge vertices before export to prevent slicer errors
+    const watertightGeom = mergeVertices(geom);
+    watertightGeom.computeVertexNormals();
+
     const exporter = new STLExporter();
-    const data = exporter.parse(geom, { binary: true });
+    const data = exporter.parse(watertightGeom, { binary: true });
     const blob = new Blob([data], { type: "application/sla" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
