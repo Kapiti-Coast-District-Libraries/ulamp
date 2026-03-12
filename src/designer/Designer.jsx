@@ -140,6 +140,9 @@ export default function Designer() {
   // prevent pack change effect from wiping randomized params once
   const skipNextDefaultsRef = React.useRef(false);
 
+  // Reference for triggering download in Viewport
+  const viewportRef = React.useRef();
+
   // ---------------------------------------------------------
   // NEW: Pre-warm the server on load to prevent Cold Start delay
   // ---------------------------------------------------------
@@ -357,6 +360,12 @@ export default function Designer() {
     }
   };
 
+  const onExport = () => {
+    if (viewportRef.current) {
+      viewportRef.current.download();
+    }
+  };
+
   const onColorChange = (e) => {
     const val = e.target.value;
     const item = palette.find(p => p.value === val);
@@ -372,6 +381,7 @@ export default function Designer() {
       <header className="topbar">
         <div className="brand">Parametric Designer</div>
         <div className="actions">
+          <button onClick={onExport} title="Download STL for 3D printing">Export 3D Model</button>
           <button onClick={onCheckout} title="Pay and save to spreadsheet">Checkout</button>
           <button onClick={randomizeAll} title="Randomize everything">Random</button>
           {/* RESET BUTTON REMOVED */}
@@ -405,7 +415,13 @@ export default function Designer() {
         </aside>
 
         <section className="viewport">
-          <Viewport builder={model.build} params={deferredParams} color={colorHex} autoSpin={params.autoSpin} />
+          <Viewport 
+            ref={viewportRef}
+            builder={model.build} 
+            params={deferredParams} 
+            color={colorHex} 
+            autoSpin={params.autoSpin} 
+          />
         </section>
       </main>
 
