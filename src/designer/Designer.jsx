@@ -1,446 +1,69 @@
-// src/designer/Designer.jsx
-import React from "react";
-import * as THREE from "three";
-import { packs } from "../packs";
-import { palette } from "../colors/palette.js";
-import { hiddenPartConfig } from "../hiddenPart/config.js";
-import AutoForm from "./controls/AutoForm.jsx";
-import Viewport from "./three/Viewport.jsx";
-import Swiper from "./controls/Swiper.jsx";
+// Example snippet to add inside Designer.jsx controls panel
+import { useState } from 'react';
+import { processImageToHeightmap } from './utils/imageProcessor';
 
-// Simple success modal reused for logging flow
-function UploadModal({ open, stage, percent, message, onCancel, canCancel }) {
-  if (!open) return null;
-  return (
-    <div className="upload-modal">
-      <div className="upload-card">
-        <div className="upload-title">Saving your lamp</div>
-        <div className="upload-steps">
-          <Step label="Verify payment" active={stage >= 1} done={stage > 1} />
-          <Step label="Save order" active={stage >= 2} done={stage > 2} />
-          <Step label="Done" active={stage >= 3} done={stage > 3} />
-        </div>
-        <div className="upload-bar">
-          <div className="upload-bar-fill" style={{ width: `${percent}%` }} />
-        </div>
-        <div className="upload-message">{message}</div>
-        <div className="upload-hint">Please keep this tab open while we finish</div>
-        <div className="upload-actions">
-          <button onClick={onCancel} disabled={!canCancel}>Close</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-function Step({ label, active, done }) {
-  return (
-    <div className={`step ${done ? "done" : active ? "active" : ""}`}>
-      <div className="dot" />
-      <div className="label">{label}</div>
-    </div>
-  );
-}
+export function ImageControls({ onParamsChange }) {
+  const [params, setParams] = useState({
+    embossDepth: 1.5,
+    invert: false,
+    repeatX: 1,
+    heightmapData: null,
+  });
 
-function IntroModal({ open, onClose }) {
-  if (!open) return null;
-  return (
-    <div className="intro-modal" role="dialog" aria-modal="true" aria-label="Welcome">
-      <div className="intro-card">
-        <h2 className="intro-title">Welcome, design your one of a kind lamp</h2>
-        <p className="intro-sub">A quick guide before you start</p>
-
-        <div className="intro-gallery">
-          <img src="/images/example-1.jpg" alt="Example lamp 1" />
-          <img src="/images/example-2.jpg" alt="Example lamp 2" />
-        </div>
-
-        <div className="intro-steps">
-          <div className="intro-step">
-            <div className="dot" />
-            <div className="text">Design your lamp, all numbers are in millimeters, so set the exact size you want</div>
-          </div>
-          <div className="intro-step">
-            <div className="dot" />
-            <div className="text">Click Checkout and we will prepare your file</div>
-          </div>
-          <div className="intro-step">
-            <div className="dot" />
-            <div className="text">Pay and wait a few seconds while your file is sent to us</div>
-          </div>
-          <div className="intro-step">
-            <div className="dot" />
-            <div className="text">We 3D print your one of a kind lamp and post it to you</div>
-          </div>
-        </div>
-
-        <div className="intro-actions">
-          <button className="secondary" onClick={onClose}>Close</button>
-          <button onClick={onClose}>Start designing</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PreparingModal({ open, message = "Preparing your file..." }) {
-  if (!open) return null;
-  return (
-    <div className="prep-modal" role="status" aria-live="polite">
-      <div className="prep-card">
-        <div className="prep-spinner" aria-hidden="true" />
-        <div>
-          <div className="prep-title">We are preparing your file</div>
-          <div className="prep-sub">{message}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export default function Designer() {
-  const packKeys = Object.keys(packs);
-  const firstPack = packKeys[0] || "";
-
-  const [packKey, setPackKey] = React.useState(firstPack);
-  const safePackKey = packKeys.includes(packKey) ? packKey : firstPack;
-  const pack = packs[safePackKey];
-
-  const modelKey = Object.keys(pack.models)[0];
-  const model = pack.models[modelKey];
-
-  const computeDefaults = React.useCallback(() => {
-    return typeof model.defaults === "function" ? model.defaults() : model.defaults;
-  }, [model]);
-
-  const [params, setParams] = React.useState(computeDefaults);
-  
-  // PERFORMANCE FIX: deferredParams lags behind slightly to keep UI responsive
-  const deferredParams = React.useDeferredValue(params);
-
-  const [uploadMsg, setUploadMsg] = React.useState("");
-
-  // color
-  const [colorHex, setColorHex] = React.useState(palette[0]?.value || "#dddddd");
-  const [colorName, setColorName] = React.useState(palette[0]?.name || "Color");
-
-  // existing upload modal
-  const [modalOpen, setModalOpen] = React.useState(false);
-  const [modalStage, setModalStage] = React.useState(0);
-  const [modalPercent, setModalPercent] = React.useState(0);
-  const [modalCanClose, setModalCanClose] = React.useState(false);
-
-  // welcome intro, and small preparing popup
-  const [welcomeOpen, setWelcomeOpen] = React.useState(false);
-  const [preparingOpen, setPreparingOpen] = React.useState(false);
-  const [preparingMsg, setPreparingMsg] = React.useState("Preparing your file...");
-
-  // guard for success handler
-  const ranSuccessRef = React.useRef(false);
-
-  // prevent pack change effect from wiping randomized params once
-  const skipNextDefaultsRef = React.useRef(false);
-
-  // Reference for triggering download in Viewport
-  const viewportRef = React.useRef();
-
-  // ---------------------------------------------------------
-  // NEW: Pre-warm the server on load to prevent Cold Start delay
-  // ---------------------------------------------------------
-  React.useEffect(() => {
-    fetch('/api/health').catch(() => {
-      // Ignore errors, just waking up the server
-    });
-  }, []);
-
-  // decide whether to show the welcome box on first paint
-  React.useEffect(() => {
-    const usp = new URLSearchParams(window.location.search);
-    const hasSuccess = !!usp.get("success");
-    const hasSession = !!usp.get("session_id");
-    const comingFromCheckout = hasSuccess && hasSession;
-    setWelcomeOpen(!comingFromCheckout);
-  }, []);
-
-  React.useEffect(() => {
-    if (skipNextDefaultsRef.current) {
-      skipNextDefaultsRef.current = false;
-      return;
-    }
-    const m = packs[safePackKey].models[Object.keys(packs[safePackKey].models)[0]];
-    setParams(typeof m.defaults === "function" ? m.defaults() : m.defaults);
-  }, [safePackKey]);
-
-  // randomize pack, params, and color
-  const randomizeAll = React.useCallback(() => {
-    const allPackKeys = Object.keys(packs);
-    const newPackKey = allPackKeys[Math.floor(Math.random() * allPackKeys.length)];
-    const newPack = packs[newPackKey];
-    const newModelKey = Object.keys(newPack.models)[0];
-    const newModel = newPack.models[newModelKey];
-
-    let next = typeof newModel.defaults === "function" ? newModel.defaults() : { ...newModel.defaults };
-
-    const stepPick = (min, max, step = 1) => {
-      const steps = Math.max(0, Math.floor((max - min) / step));
-      const k = Math.floor(Math.random() * (steps + 1));
-      const v = min + k * step;
-      return Number.isFinite(v) ? Number(v.toFixed(6)) : min;
-    };
-
-    let schema = typeof newModel.schema === "function" ? newModel.schema(next) : newModel.schema;
-    const texField = schema?.find(f => f?.type === "select" && f.key === "texture");
-    if (texField && Array.isArray(texField.options) && texField.options.length) {
-      const rnd = texField.options[Math.floor(Math.random() * texField.options.length)];
-      if (rnd?.value !== undefined) next.texture = rnd.value;
-    }
-
-    schema = typeof newModel.schema === "function" ? newModel.schema(next) : newModel.schema;
-    for (const f of schema || []) {
-      if (!f || !f.key) continue;
-      const key = String(f.key);
-      if (key.toLowerCase().includes("hole")) continue;
-      if (f.type === "range") {
-        const min = Number.isFinite(f.min) ? f.min : 0;
-        const max = Number.isFinite(f.max) ? f.max : 1;
-        const step = Number.isFinite(f.step) ? f.step : 1;
-        next[key] = stepPick(min, max, step);
-      } else if (f.type === "checkbox") {
-        next[key] = Math.random() < 0.5;
-      } else if (f.type === "select" && Array.isArray(f.options) && f.options.length) {
-        const opt = f.options[Math.floor(Math.random() * f.options.length)];
-        if (opt?.value !== undefined) next[key] = opt.value;
-      }
-    }
-
-    const swatch = palette[Math.floor(Math.random() * palette.length)];
-    const newColorHex = swatch?.value || "#dddddd";
-    const newColorName = swatch?.name || "Color";
-
-    skipNextDefaultsRef.current = true;
-    setPackKey(newPackKey);
-    setParams(next);
-    setColorHex(newColorHex);
-    setColorName(newColorName);
-  }, []);
-
-  // prevent tab close during log
-  React.useEffect(() => {
-    const onBeforeUnload = (e) => {
-      if (modalOpen && modalStage > 0 && modalStage < 3) {
-        e.preventDefault();
-        e.returnValue = "";
-        return "";
-      }
-    };
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [modalOpen, modalStage]);
-
-  // success flow, log variables to Supabase
-  React.useEffect(() => {
-    const usp = new URLSearchParams(window.location.search);
-    const success = usp.get("success");
-    const sessionId = usp.get("session_id");
-    if (!success || !sessionId) return;
-    if (ranSuccessRef.current) return;
-    ranSuccessRef.current = true;
-
-    // hide welcome if it was open for any reason
-    setWelcomeOpen(false);
-
-    // show the upload modal immediately
-    setModalOpen(true);
-    setModalCanClose(false);
-    setModalStage(1);
-    setModalPercent(15);
-    setUploadMsg("Verifying payment...");
-
-    const run = async () => {
-      try {
-        const r = await fetch(`/api/session/${sessionId}`);
-        if (!r.ok) {
-          setUploadMsg(`Could not verify payment, ${r.status}`);
-          setModalCanClose(true);
-          return;
-        }
-        const js = await r.json();
-        if (!js?.paid) {
-          setUploadMsg("Payment not completed. Refresh this page later.");
-          setModalCanClose(true);
-          return;
-        }
-
-        setModalStage(2);
-        setModalPercent(75);
-        setUploadMsg("Saving your order...");
-
-        const lr = await fetch(`/api/log/${sessionId}`, { method: "POST" });
-        if (!lr.ok) {
-          const t = await lr.text().catch(() => "");
-          setUploadMsg(`Could not save the order, ${lr.status}, ${t}`);
-          setModalCanClose(true);
-          return;
-        }
-
-        setModalStage(3);
-        setModalPercent(100);
-        setUploadMsg("Order saved. You can close this window now.");
-        setTimeout(() => setModalCanClose(true), 600);
-      } catch (e) {
-        console.error(e);
-        setUploadMsg("Something went wrong while saving your order.");
-        setModalCanClose(true);
-      } finally {
-        const url = new URL(window.location.href);
-        url.searchParams.delete("success");
-        url.searchParams.delete("session_id");
-        window.history.replaceState({}, "", url.toString());
-      }
-    };
-    run();
-  }, []);
-
-  // auto close the small checkout popup
-  React.useEffect(() => {
-    const closePrep = () => setPreparingOpen(false);
-
-    const onPageShow = () => closePrep(); // bfcache return
-    const onPopState = () => closePrep(); // browser back or forward
-    const onVisibility = () => { if (!document.hidden) closePrep(); };
-
-    window.addEventListener("pageshow", onPageShow);
-    window.addEventListener("popstate", onPopState);
-    document.addEventListener("visibilitychange", onVisibility);
-
-    // also close once on mount
-    closePrep();
-
-    return () => {
-      window.removeEventListener("pageshow", onPageShow);
-      window.removeEventListener("popstate", onPopState);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, []);
-
-  const onCheckout = async () => {
-    try {
-      setPreparingMsg("Preparing your file...");
-      setPreparingOpen(true);
-
-      const designName = "lampshade.stl";
-      const enriched = { ...params, colorHex, colorName };
-      const r = await fetch("/api/checkout", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          packKey: safePackKey,
-          modelKey,
-          params: enriched,
-          filename: designName
-        })
-      });
-      if (!r.ok) {
-        const t = await r.text().catch(() => "");
-        setPreparingOpen(false);
-        alert(`Checkout failed, status ${r.status}, ${t}`);
-        return;
-      }
-      const js = await r.json();
-      if (js?.url) {
-        setPreparingMsg("Redirecting to checkout...");
-        window.location.href = js.url;
-      } else {
-        setPreparingOpen(false);
-        alert("Checkout failed, no URL returned");
-      }
-    } catch (e) {
-      console.error(e);
-      setPreparingOpen(false);
-      alert(`Checkout error, ${e?.message || e}`);
+  const handleImageUpload = async (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const heightmap = await processImageToHeightmap(file, 256);
+      const newParams = { ...params, heightmapData: heightmap };
+      setParams(newParams);
+      onParamsChange(newParams);
     }
   };
 
-  const onExport = () => {
-    if (viewportRef.current) {
-      viewportRef.current.download();
-    }
+  const handleSliderChange = (key, value) => {
+    const newParams = { ...params, [key]: value };
+    setParams(newParams);
+    onParamsChange(newParams);
   };
-
-  const onColorChange = (e) => {
-    const val = e.target.value;
-    const item = palette.find(p => p.value === val);
-    setColorHex(val);
-    setColorName(item?.name || "Color");
-  };
-
-  // Convert packKeys to options format for Swiper
-  const packOptions = packKeys.map(k => ({ label: packs[k].label, value: k }));
 
   return (
-    <div className="app">
-      <header className="topbar">
-        <div className="brand">Parametric Designer</div>
-        <div className="actions">
-          <button onClick={onExport} title="Download STL for 3D printing">Export 3D Model</button>
-          <button onClick={onCheckout} title="Pay and save to spreadsheet">Checkout</button>
-          <button onClick={randomizeAll} title="Randomize everything">Random</button>
-          {/* RESET BUTTON REMOVED */}
-        </div>
-      </header>
-
-      <main className="layout">
-        <aside className="panel">
-          <div className="field">
-            <label>Pack</label>
-            {/* NEW: Replaced Select with Swiper */}
-            <Swiper 
-              options={packOptions} 
-              value={safePackKey} 
-              onChange={setPackKey} 
-            />
-          </div>
-
-          <div className="field">
-            <label>Lamp color</label>
-            <select value={colorHex} onChange={onColorChange}>
-              {palette.map(({ name, value }) => (
-                <option key={value} value={value}>{name}</option>
-              ))}
-            </select>
-          </div>
-
-          <AutoForm schema={model.schema} params={params} setParams={setParams} />
-
-          {uploadMsg && <div className="notice">{uploadMsg}</div>}
-        </aside>
-
-        <section className="viewport">
-          <Viewport 
-            ref={viewportRef}
-            builder={model.build} 
-            params={deferredParams} 
-            color={colorHex} 
-            autoSpin={params.autoSpin} 
-          />
-        </section>
-      </main>
-
-      <footer className="footer">Built with React and Three.js</footer>
-
-      <UploadModal
-        open={modalOpen}
-        stage={modalStage}
-        percent={modalPercent}
-        message={uploadMsg}
-        canCancel={modalCanClose}
-        onCancel={() => setModalOpen(false)}
+    <div className="control-panel">
+      <h3>Import Image & Emboss</h3>
+      
+      <input 
+        type="file" 
+        accept="image/*" 
+        onChange={handleImageUpload} 
       />
 
-      {/* Welcome box should show on normal visits, not after payment */}
-      <IntroModal open={welcomeOpen} onClose={() => setWelcomeOpen(false)} />
+      <label>Emboss Depth (mm)</label>
+      <input 
+        type="range" 
+        min="-5" 
+        max="5" 
+        step="0.1" 
+        value={params.embossDepth} 
+        onChange={(e) => handleSliderChange('embossDepth', parseFloat(e.target.value))} 
+      />
 
-      {/* Small preparing popup during checkout */}
-      <PreparingModal open={preparingOpen} message={preparingMsg} />
+      <label>Wrap Repeat Count</label>
+      <input 
+        type="range" 
+        min="1" 
+        max="6" 
+        step="1" 
+        value={params.repeatX} 
+        onChange={(e) => handleSliderChange('repeatX', parseInt(e.target.value))} 
+      />
+
+      <label>
+        <input 
+          type="checkbox" 
+          checked={params.invert} 
+          onChange={(e) => handleSliderChange('invert', e.target.checked)} 
+        />
+        Invert Image
+      </label>
     </div>
   );
 }
